@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         כלי עזר משולבים וסרגל צד ל-ChatGPT.com
 // @namespace    http://tampermonkey.net/
-// @version      3.1.15
+// @version      3.2.00
 // @description  משלב עיצוב בועות, RTL, העתקה, הסתרת "תוכניות", וסרגל צד Timeline דינמי מרובה עמודות, עם התאמה אישית, אופטימיזציות, ותמיכה במצב כהה. תיקונים לטבלאות ורשימות. (אופטימיזציות CPU/RAM + תיקון הסתרת תוכניות למשתמש חינמי)
 // @author       Y-PLONI
 // @match        *://chatgpt.com/*
@@ -493,75 +493,212 @@
         debugLog('HidePlans - MutationObserver monitoring (if page visible).');
     }
 
-    // --- START: Timeline Sidebar Feature ---
-    let lastNotifiedMessageId = null; // משתנה מעקב להודעה האחרונה שהתרענו עליה
-
+    // --- START: AI Notifications Feature ---
+    let lastNotifiedMessageId = null;
     let notificationCheckTimeout = null;
-    
-    function checkForNewAiResponse() {
-        // אם ההתראות כבויות בהגדרות, אל תעשה כלום
+    let notificationDomObserver = null;
+    let notificationUrlObserver = null;
+    let notificationPollingInterval = null;
+    let notificationConversationKey = '';
+    let notificationAwaitingResponse = false;
+    let notificationPendingWasInBackground = false;
+    let notificationPendingUserMessageId = null;
+    let notificationAssistantBaselineId = null;
+    const notifiedAssistantMessageIds = new Set();
+
+    function getConversationKey() {
+        const path = window.location.pathname || '/';
+        const match = path.match(/^\/c\/([^/?#]+)/);
+        if (match && match[1]) return `c:${match[1]}`;
+        return `path:${path}`;
+    }
+
+    function getLatestRoleMessage(role) {
+        const messages = document.querySelectorAll(`div[data-message-author-role="${role}"][data-message-id]`);
+        if (!messages.length) return null;
+        const message = messages[messages.length - 1];
+        const messageId = message.getAttribute('data-message-id');
+        if (!messageId) return null;
+        return { element: message, id: messageId };
+    }
+
+    function getAssistantMessageCleanText(messageEl) {
+        if (!messageEl) return '';
+        const contentContainer = messageEl.querySelector('.markdown.prose') ||
+            messageEl.querySelector('.prose') ||
+            messageEl.querySelector('.text-token-text-primary') ||
+            messageEl;
+        const rawText = (contentContainer?.textContent || contentContainer?.innerText || '').trim();
+        return rawText.replace(/^(Thinking|חושב|\.\.\.|\s)+/i, '').replace(/\s+/g, ' ').trim();
+    }
+
+    function isAssistantMessageStillStreaming(messageEl) {
+        if (!messageEl) return false;
+        return !!(
+            messageEl.querySelector('.result-streaming') ||
+            messageEl.querySelector('[class*="typing"]') ||
+            messageEl.querySelector('[class*="streaming"]') ||
+            messageEl.querySelector('[data-testid*="stop"]')
+        );
+    }
+
+    function scheduleNotificationRecheck(delay = 900) {
+        if (notificationCheckTimeout) clearTimeout(notificationCheckTimeout);
+        notificationCheckTimeout = setTimeout(() => {
+            notificationCheckTimeout = null;
+            checkForNewAiResponse();
+        }, delay);
+    }
+
+    function updateNotificationPolling() {
+        if (notificationPollingInterval) {
+            clearInterval(notificationPollingInterval);
+            notificationPollingInterval = null;
+        }
         if (!currentSettings.enableAiMessageNotifications) return;
 
-        // בטל בדיקה קודמת אם קיימת
+        // Fallback for background-tab throttling: keep checking while waiting for a response.
+        if (!notificationAwaitingResponse && pageVisible) return;
+        const intervalMs = pageVisible ? 1500 : 900;
+        notificationPollingInterval = setInterval(() => {
+            checkForNewAiResponse();
+        }, intervalMs);
+    }
+
+    function resetNotificationStateForCurrentConversation() {
+        notificationAwaitingResponse = false;
+        notificationPendingWasInBackground = false;
+        notificationPendingUserMessageId = null;
+        notificationAssistantBaselineId = null;
+
+        const latestUser = getLatestRoleMessage('user');
+        if (latestUser) {
+            notificationPendingUserMessageId = latestUser.id;
+        }
+
+        const latestAssistant = getLatestRoleMessage('assistant');
+        if (latestAssistant) {
+            notificationAssistantBaselineId = latestAssistant.id;
+            lastNotifiedMessageId = latestAssistant.id;
+            notifiedAssistantMessageIds.add(latestAssistant.id);
+        }
+
+        if (notificationCheckTimeout) {
+            clearTimeout(notificationCheckTimeout);
+            notificationCheckTimeout = null;
+        }
+        updateNotificationPolling();
+    }
+
+    function checkForNewAiResponse() {
+        if (!currentSettings.enableAiMessageNotifications) return;
+
+        const currentConversationKey = getConversationKey();
+        if (currentConversationKey !== notificationConversationKey) {
+            notificationConversationKey = currentConversationKey;
+            resetNotificationStateForCurrentConversation();
+            return;
+        }
+
+        const latestUser = getLatestRoleMessage('user');
+        if (latestUser && latestUser.id !== notificationPendingUserMessageId) {
+            notificationPendingUserMessageId = latestUser.id;
+            const latestAssistantForBaseline = getLatestRoleMessage('assistant');
+            notificationAssistantBaselineId = latestAssistantForBaseline ? latestAssistantForBaseline.id : null;
+            notificationAwaitingResponse = true;
+            notificationPendingWasInBackground = !pageVisible;
+            updateNotificationPolling();
+            debugLog(`Notifications - New user message detected, waiting for AI completion. userId=${latestUser.id}`);
+        }
+
+        if (!notificationAwaitingResponse) return;
+
+        const latestAssistant = getLatestRoleMessage('assistant');
+        if (!latestAssistant) {
+            scheduleNotificationRecheck();
+            return;
+        }
+        if (notificationAssistantBaselineId && latestAssistant.id === notificationAssistantBaselineId) {
+            scheduleNotificationRecheck();
+            return;
+        }
+        if (latestAssistant.id === lastNotifiedMessageId || notifiedAssistantMessageIds.has(latestAssistant.id)) {
+            notificationAwaitingResponse = false;
+            notificationPendingWasInBackground = false;
+            notificationAssistantBaselineId = latestAssistant.id;
+            updateNotificationPolling();
+            return;
+        }
+        if (isAssistantMessageStillStreaming(latestAssistant.element)) {
+            scheduleNotificationRecheck();
+            return;
+        }
+
+        const cleanText = getAssistantMessageCleanText(latestAssistant.element);
+        if (!cleanText) {
+            scheduleNotificationRecheck();
+            return;
+        }
+
+        const words = cleanText.split(/\s+/);
+        const preview = words.slice(0, 10).join(' ') + (words.length > 10 ? '...' : '');
+        if (!pageVisible || notificationPendingWasInBackground) {
+            playNotificationSound(preview || 'התקבלה תשובה חדשה');
+        } else {
+            debugLog(`Notifications - Suppressed while page visible. assistantId=${latestAssistant.id}`);
+        }
+
+        lastNotifiedMessageId = latestAssistant.id;
+        notificationAssistantBaselineId = latestAssistant.id;
+        notificationAwaitingResponse = false;
+        notificationPendingWasInBackground = false;
+        notifiedAssistantMessageIds.add(latestAssistant.id);
+        updateNotificationPolling();
+        debugLog(`Notifications - AI completion notified. assistantId=${latestAssistant.id}`);
+    }
+
+    function initializeAiNotificationsFeature() {
+        if (notificationDomObserver) {
+            notificationDomObserver.disconnect();
+            notificationDomObserver = null;
+        }
+        if (notificationUrlObserver) {
+            notificationUrlObserver.disconnect();
+            notificationUrlObserver = null;
+        }
+        if (notificationPollingInterval) {
+            clearInterval(notificationPollingInterval);
+            notificationPollingInterval = null;
+        }
         if (notificationCheckTimeout) {
             clearTimeout(notificationCheckTimeout);
             notificationCheckTimeout = null;
         }
 
-        // מצא את כל ההודעות של ה-AI
-        const allAiMessages = document.querySelectorAll('div[data-message-author-role="assistant"][data-message-id]');
-        if (allAiMessages.length === 0) return;
-
-        // בדוק כל הודעה כדי למצוא הודעה חדשה עם תוכן
-        for (let i = allAiMessages.length - 1; i >= 0; i--) {
-            const message = allAiMessages[i];
-            const messageId = message.getAttribute('data-message-id');
-            
-            // אם כבר התרענו על ההודעה הזו, דלג עליה
-            if (!messageId || messageId === lastNotifiedMessageId) continue;
-
-            // בדוק אם ההודעה עדיין נכתבת (יש אנימציה או cursor)
-            const isStillTyping = message.querySelector('.result-streaming') || 
-                                message.querySelector('[class*="typing"]') ||
-                                message.querySelector('[class*="streaming"]') ||
-                                message.textContent.includes('...');
-
-            if (isStillTyping) {
-                // אם עדיין כותבת, חכה קצת ובדוק שוב
-                notificationCheckTimeout = setTimeout(() => checkForNewAiResponse(), 1000);
-                return;
-            }
-
-            // מצא את האזור שבו הטקסט מופיע
-            const contentContainer = message.querySelector('.markdown.prose') || 
-                                   message.querySelector('.prose') || 
-                                   message.querySelector('.text-token-text-primary') || 
-                                   message;
-
-            if (!contentContainer) continue;
-
-            // בדוק אם יש תוכן אמיתי
-            const rawText = (contentContainer.textContent || contentContainer.innerText || '').trim();
-            
-            // נקה טקסט מסמלים ומילים לא רלוונטיות
-            const cleanText = rawText.replace(/^(Thinking|חושב|\.\.\.|\s)+/i, '').replace(/\s+/g, ' ').trim();
-            
-            if (cleanText.length > 15) { // וודא שיש תוכן משמעותי
-                debugLog(`New AI response with actual content detected. ID: ${messageId}, Content: ${cleanText.substring(0, 50)}...`);
-
-                // ניצור תצוגה מקדימה של הטקסט עבור ההתראה
-                const words = cleanText.split(/\s+/);
-                const preview = words.slice(0, 8).join(' ') + (words.length > 8 ? '...' : '');
-
-                // חכה רגע קטן כדי לוודא שההודעה באמת הסתיימה
-                setTimeout(() => {
-                    playNotificationSound(preview);
-                    lastNotifiedMessageId = messageId;
-                }, 500);
-                
-                return; // עצור אחרי שמצאנו הודעה חדשה
-            }
+        if (!currentSettings.enableAiMessageNotifications) {
+            notificationAwaitingResponse = false;
+            notificationPendingWasInBackground = false;
+            updateNotificationPolling();
+            return;
         }
+
+        notificationConversationKey = getConversationKey();
+        resetNotificationStateForCurrentConversation();
+
+        notificationDomObserver = new MutationObserver(debounce(() => {
+            checkForNewAiResponse();
+        }, 250));
+        notificationDomObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+        notificationUrlObserver = new MutationObserver(() => {
+            const key = getConversationKey();
+            if (key !== notificationConversationKey) {
+                notificationConversationKey = key;
+                resetNotificationStateForCurrentConversation();
+            }
+        });
+        notificationUrlObserver.observe(document.body, { childList: true, subtree: true });
+        updateNotificationPolling();
     }
 
 
@@ -779,37 +916,99 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
         return messagesArray.map(msg => msg.id).join(',');
     }
 
-    function timeline_findChatElements() { // OPTIMIZED: With ID hashing
-        timeline_chatScrollContainer = $('#thread div.flex.h-full.flex-col.overflow-y-auto[class*="scrollbar-gutter:stable_both-edges"]').first();
-        if (!timeline_chatScrollContainer || !timeline_chatScrollContainer.length) {
-             timeline_chatScrollContainer = $('div.flex.h-full.flex-col.overflow-y-auto').first();
+    const TIMELINE_MESSAGE_ARTICLE_SELECTORS = [
+        'article[data-testid^="conversation-turn-"]',
+        'article[data-testid*="conversation-turn"]',
+        'article:has([data-message-author-role])'
+    ];
+
+    function timeline_findScrollableAncestor(startEl) {
+        let current = startEl;
+        while (current && current !== document.body && current !== document.documentElement) {
+            if (current.nodeType !== 1) {
+                current = current.parentElement;
+                continue;
+            }
+            const style = window.getComputedStyle(current);
+            const overflowY = style.overflowY || '';
+            const isScrollableOverflow = overflowY.includes('auto') || overflowY.includes('scroll');
+            if (isScrollableOverflow && current.scrollHeight > current.clientHeight + 16) {
+                return current;
+            }
+            current = current.parentElement;
+        }
+        return null;
+    }
+
+    function timeline_findMessageArticles() {
+        for (const selector of TIMELINE_MESSAGE_ARTICLE_SELECTORS) {
+            try {
+                const nodes = document.querySelectorAll(selector);
+                if (nodes && nodes.length) return Array.from(nodes);
+            } catch (e) {
+                // Skip selectors not supported in older engines (e.g., :has)
+            }
+        }
+        return [];
+    }
+
+    function timeline_extractMessageData(articleEl, indexFallback) {
+        const $article = $(articleEl);
+        let $messageRoot = $article.find('div[data-message-id]').first();
+
+        if (!$messageRoot || !$messageRoot.length) {
+            // Fallback: use role container or the article itself if message-id is absent.
+            $messageRoot = $article.find('[data-message-author-role]').first();
+        }
+        if (!$messageRoot || !$messageRoot.length) {
+            $messageRoot = $article;
         }
 
-        if (!timeline_chatScrollContainer || !timeline_chatScrollContainer.length || !timeline_chatScrollContainer.get(0).isConnected) {
-            debugLog('Timeline - Chat scroll container not found/connected.');
+        let role = 'user';
+        if ($article.is('[data-message-author-role="assistant"]') || $article.find('[data-message-author-role="assistant"]').length > 0) {
+            role = 'assistant';
+        } else if ($article.is('[data-message-author-role="user"]') || $article.find('[data-message-author-role="user"]').length > 0) {
+            role = 'user';
+        }
+
+        const messageId =
+            $messageRoot.attr('data-message-id') ||
+            $article.attr('data-message-id') ||
+            $article.attr('id') ||
+            $article.attr('data-testid') ||
+            `fallback-${role}-${indexFallback}`;
+
+        if (!$messageRoot || !$messageRoot.length || !messageId) return null;
+
+        return { element: $messageRoot, role, id: messageId };
+    }
+
+    function timeline_findChatElements() { // OPTIMIZED: With ID hashing
+        const messageArticles = timeline_findMessageArticles();
+
+        if (!messageArticles.length) {
+            timeline_chatScrollContainer = $();
+            debugLog('Timeline - Message articles not found.');
             if (timeline_messages.length > 0) { // Had messages, now none
                 timeline_messages = [];
                 timeline_messages_ids_hash = "";
                 return true;
             }
-            timeline_messages_ids_hash = ""; // Ensure hash is clear if no messages
-            return false; // No messages before, still no messages
+            timeline_messages_ids_hash = "";
+            return false;
         }
-        timeline_chatScrollContainerTop = timeline_chatScrollContainer.get(0).getBoundingClientRect().top;
 
-        const messageArticles = timeline_chatScrollContainer.find('article[data-testid^="conversation-turn-"]');
-        const newMessages = messageArticles.toArray().map(articleEl => {
-            const $article = $(articleEl);
-            const $messageDiv = $article.find('div[data-message-id]').first();
-            let role = 'user'; // Default role
-            // Determine role based on author divs within the article
-            if ($article.find('div[data-message-author-role="assistant"]').length > 0) {
-                role = 'assistant';
-            } else if ($article.find('div[data-message-author-role="user"]').length > 0) {
-                role = 'user';
-            }
-            return { element: $messageDiv, role: role, id: $messageDiv.attr('data-message-id') };
-        }).filter(msg => msg.element && msg.element.length > 0 && msg.id);
+        const scrollContainerEl = timeline_findScrollableAncestor(messageArticles[0]) || document.querySelector('main') || document.scrollingElement;
+        timeline_chatScrollContainer = scrollContainerEl ? $(scrollContainerEl) : $();
+        if (timeline_chatScrollContainer && timeline_chatScrollContainer.length && timeline_chatScrollContainer.get(0).isConnected) {
+            timeline_chatScrollContainerTop = timeline_chatScrollContainer.get(0).getBoundingClientRect().top;
+        } else {
+            timeline_chatScrollContainerTop = 0;
+        }
+
+        const newMessages = messageArticles
+            .map((articleEl, index) => timeline_extractMessageData(articleEl, index))
+            .filter(msg => msg && msg.element && msg.element.length > 0 && msg.id);
 
         const newIdsHash = generateMessagesIdsHash(newMessages);
 
@@ -1006,11 +1205,12 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
         if (timeline_intersectionObserver) timeline_intersectionObserver.disconnect();
 
         const rootEl = timeline_chatScrollContainer && timeline_chatScrollContainer.length ? timeline_chatScrollContainer.get(0) : null;
+        const useViewportRoot = !rootEl || rootEl === document.body || rootEl === document.documentElement || rootEl === document.scrollingElement;
         if (!rootEl || timeline_messages.length === 0) {
             // debugLog("Timeline - IO not setup (no root scroll container or no messages)."); // Less verbose
             return;
         }
-        const io_options = { root: rootEl, rootMargin: '0px', threshold: 0.35 }; // Threshold might need adjustment
+        const io_options = { root: useViewportRoot ? null : rootEl, rootMargin: '0px', threshold: 0.35 }; // Threshold might need adjustment
         timeline_intersectionObserver = new IntersectionObserver((entries) => {
             if(!pageVisible || !currentSettings.enableTimelineSidebar) return;
             let bestEntry = null;
@@ -1125,8 +1325,6 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
             }
 
             if (refreshNeeded) {
-                checkForNewAiResponse();
-
                 const messagesHaveChangedStructurally = timeline_findChatElements();
 
                 if (messagesHaveChangedStructurally || (document.querySelectorAll(`div[id^="${TIMELINE_HTML_ID_PREFIX}"]`).length === 0 && timeline_messages.length > 0) ) {
@@ -1352,6 +1550,7 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
                 initializeCopyButtonFeature();
                 initializeHidePlansFeature();
                 initializeTimelineFeatureWrapper();
+                initializeAiNotificationsFeature();
                 debugLog("Settings saved and features re-initialized.");
             });
             document.getElementById('settings-cancel-button').addEventListener('click', () => {
@@ -1400,42 +1599,32 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
     function main() {
         loadSettings();
 
-        // איתחול lastNotifiedMessageId למניעת התראות על הודעות ישנות
-        const allAiMessagesInitial = document.querySelectorAll('div[data-message-author-role="assistant"][data-message-id]');
-        if (allAiMessagesInitial.length > 0) {
-            lastNotifiedMessageId = allAiMessagesInitial[allAiMessagesInitial.length - 1].getAttribute('data-message-id');
-        }
-
         applyStylesOnLoad(); // Initial style application
         initializeCopyButtonFeature();
         initializeHidePlansFeature();
         initializeTimelineFeatureWrapper();
+        initializeAiNotificationsFeature();
         initializeThemeWatcher();
         GM_registerMenuCommand('הגדרות כלי עזר וסרגל צד', openSettingsDialog);
         GM_registerMenuCommand('🔔 בדוק התראות (לבדיקה)', () => {
             playNotificationSound('זוהי בדיקת התראה - אם אתה שומע/רואה את זה, ההתראות עובדות!');
         });
-        
-        // איפוס מעקב התראות כשמתחילים שיחה חדשה
-        let currentUrl = window.location.href;
-        const urlObserver = new MutationObserver(() => {
-            if (window.location.href !== currentUrl) {
-                currentUrl = window.location.href;
-                // אם זו שיחה חדשה, אפס את המעקב
-                if (currentUrl.includes('/c/') || currentUrl === 'https://chatgpt.com/' || currentUrl === 'https://chat.openai.com/') {
-                    lastNotifiedMessageId = null;
-                    console.log('[CGPT Script] איפוס מעקב התראות לשיחה חדשה');
-                }
-            }
-        });
-        urlObserver.observe(document.body, { childList: true, subtree: true });
 
         document.addEventListener('visibilitychange', ()=>{
             const oldPageVisible = pageVisible;
             pageVisible = !document.hidden;
             debugLog(`Page visibility changed to: ${pageVisible}`);
 
+            if (!pageVisible && notificationAwaitingResponse) {
+                notificationPendingWasInBackground = true;
+                updateNotificationPolling();
+            }
+
             if (pageVisible && !oldPageVisible) { // Page became visible
+                if (currentSettings.enableAiMessageNotifications) {
+                    checkForNewAiResponse(); // Catch completions that happened while tab was backgrounded
+                    updateNotificationPolling();
+                }
                 // Re-activate or ensure observers are running for enabled features
                 if (currentSettings.enableCopyButton) {
                      if (!copyButtonObserver && document.querySelector(ACTIONS_CONTAINER_SELECTOR)) attemptToSetupCopyButtonObserver();
@@ -1465,6 +1654,9 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
                 }
                  debugLog("Features re-checked/re-activated on page visibility.");
             } else if (!pageVisible && oldPageVisible) { // Page became hidden
+                if (currentSettings.enableAiMessageNotifications) {
+                    updateNotificationPolling();
+                }
                 // Disconnect observers to save resources
                 if (copyButtonObserver) { try { copyButtonObserver.disconnect(); } catch(e){/*silent*/} }
                 if (window.__cgptCopyBtnBodyObserver) { try { window.__cgptCopyBtnBodyObserver.disconnect(); } catch(e){/*silent*/} }

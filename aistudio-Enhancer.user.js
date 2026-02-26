@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         AI Studio – משופר
 // @namespace    https://example.com/
-// @version      1.6.0
+// @version      1.7.0
 // @description  פותח היסטוריה אוטומטית, סרגל-צד משופר, תיקוני RTL, בועות צבע, הפעלה אוטומטית של כלים ב”שיחה חדשה”, ושמירה אוטומטית של השיחה והתראות קוליות וחזותיות על הודעות AI חדשות.
 // @author       Y-PLONI
 // @match        https://aistudio.google.com/*
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_setClipboard
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
 // @downloadURL  https://github.com/Y-PLONI/Improving-AI-sites/raw/main/aistudio-Enhancer.user.js
@@ -20,7 +21,7 @@
   /*──────────────────────────────────
     0. ניהול הגדרות ותפריט
   ──────────────────────────────────*/
-  const DEFAULTS = { openHistoryOnLoad: true, sidebar: true, rtl: true, bubbles: true, codeExecution: true, grounding: true, autoSave: true, aiMessageNotifications: true };
+  const DEFAULTS = { openHistoryOnLoad: true, sidebar: true, rtl: true, bubbles: true, codeExecution: true, grounding: true, autoSave: true, aiMessageNotifications: true, copyConversationButton: true };
   const SETTINGS_KEY = 'aisEnhancerSettings';
   const settings = Object.assign({}, DEFAULTS, GM_getValue(SETTINGS_KEY, {}));
 
@@ -67,7 +68,7 @@
         const span = document.createElement('span'); span.textContent = label;
         row.append(cb, span); panel.appendChild(row);
     };
-    addCheckbox('openHistoryOnLoad', 'פתח היסטוריה בהפעלה ראשונה'); addCheckbox('sidebar', 'הצג סרגל צד משופר'); addCheckbox('rtl', 'תקן RTL'); addCheckbox('bubbles', 'בועות צבע'); addCheckbox('autoSave', 'שמירה אוטומטית כל 5 שניות'); addCheckbox('aiMessageNotifications', 'התראות קוליות וחזותיות על הודעות AI חדשות');
+    addCheckbox('openHistoryOnLoad', 'פתח היסטוריה בהפעלה ראשונה'); addCheckbox('sidebar', 'הצג סרגל צד משופר'); addCheckbox('rtl', 'תקן RTL'); addCheckbox('bubbles', 'בועות צבע'); addCheckbox('autoSave', 'שמירה אוטומטית כל 5 שניות'); addCheckbox('aiMessageNotifications', 'התראות קוליות וחזותיות על הודעות AI חדשות'); addCheckbox('copyConversationButton', 'הצג כפתור "העתק שיחה"');
 
     const notifTitle = document.createElement('h4'); notifTitle.textContent = 'התראות'; notifTitle.style.margin = '12px 0 4px'; panel.appendChild(notifTitle);
     const notifBtn = document.createElement('button');
@@ -258,6 +259,256 @@
         if (saveButton) saveButton.click();
       }
       setInterval(triggerDirectSave, SAVE_INTERVAL_MS);
+    })();
+  }
+
+  /*──────────────────────────────────
+    7. כפתור העתקת כל השיחה
+  ──────────────────────────────────*/
+  if (settings.copyConversationButton) {
+    (() => {
+      'use strict';
+      const COPY_BUTTON_ID = 'ais-copy-conversation-button';
+
+      function injectCopyButtonStyles() {
+        if (document.getElementById('ais-copy-conversation-style')) return;
+        const css = `
+          #${COPY_BUTTON_ID} {
+            position: fixed;
+            top: 84px;
+            right: 16px;
+            z-index: 10001;
+            width: 36px;
+            height: 36px;
+            border: 1px solid rgba(0,0,0,0.15);
+            border-radius: 10px;
+            background: #ffffff;
+            color: #1f1f1f;
+            font-size: 18px;
+            line-height: 1;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+          }
+          #${COPY_BUTTON_ID}:hover { background: #f4f4f4; }
+          @media (prefers-color-scheme: dark) {
+            #${COPY_BUTTON_ID} {
+              background: #2b2b2b;
+              color: #f3f3f3;
+              border-color: rgba(255,255,255,0.2);
+            }
+            #${COPY_BUTTON_ID}:hover { background: #3a3a3a; }
+          }
+        `;
+        (typeof GM_addStyle === 'function') ? GM_addStyle(css) : (() => { const s = document.createElement('style'); s.id = 'ais-copy-conversation-style'; s.textContent = css; document.head.appendChild(s); })();
+      }
+
+      const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+      let isCopyInProgress = false;
+
+      function getAllElementsDeep(root = document) {
+        const out = [];
+        const stack = [root];
+        while (stack.length) {
+          const node = stack.pop();
+          if (!node) continue;
+          const children = node.children ? Array.from(node.children) : [];
+          for (const child of children) {
+            out.push(child);
+            stack.push(child);
+            if (child.shadowRoot) stack.push(child.shadowRoot);
+          }
+        }
+        return out;
+      }
+
+      function queryAllDeep(selector, root = document) {
+        return getAllElementsDeep(root).filter(el => el.matches && el.matches(selector));
+      }
+
+      function getActiveChatSession() {
+        const sessions = queryAllDeep('ms-chat-session').filter(el => el.isConnected);
+        if (sessions.length === 0) return null;
+        const scored = sessions.map(session => {
+          const turns = queryAllDeep('ms-chat-turn', session).length;
+          const rect = session.getBoundingClientRect();
+          const visibleScore = (rect.width > 0 && rect.height > 0) ? 1 : 0;
+          return { session, score: turns * 10 + visibleScore };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        return scored[0].session;
+      }
+
+      function findTurnContainer(turnElement) {
+        if (!turnElement) return null;
+        const direct = turnElement.querySelector('.chat-turn-container.render, .chat-turn-container');
+        if (direct) return direct;
+        const deep = queryAllDeep('.chat-turn-container.render, .chat-turn-container', turnElement);
+        return deep[0] || null;
+      }
+
+      function findBestScrollElement(turns) {
+        const firstTurn = turns && turns[0] ? turns[0] : null;
+        if (!firstTurn) return document.scrollingElement || document.documentElement;
+
+        let node = firstTurn;
+        while (node) {
+          if (node instanceof Element) {
+            const style = getComputedStyle(node);
+            const overflowY = style.overflowY;
+            const canScroll = ['auto', 'scroll', 'overlay'].includes(overflowY) && node.scrollHeight > node.clientHeight + 20;
+            if (canScroll) return node;
+          }
+          if (node.parentElement) {
+            node = node.parentElement;
+          } else {
+            const root = node.getRootNode && node.getRootNode();
+            node = root && root.host ? root.host : null;
+          }
+        }
+        return document.scrollingElement || document.documentElement;
+      }
+
+      function normalizeTurnText(rawText) {
+        const lines = (rawText || '')
+          .replace(/editmore_vert|more_vert/gi, '')
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0)
+          .filter(line => !/^(Model|User)$/i.test(line))
+          .filter(line => !/^User\s+play_circle/i.test(line))
+          .filter(line => !/^\d{1,3}(?:,\d{3})*\s+tokens$/i.test(line))
+          .filter(line => !/play_circle/i.test(line))
+          .filter(line => !/^Sources?\s*help$/i.test(line))
+          .filter(line => !/^Google Search Suggestions/i.test(line))
+          .filter(line => !/^Display of Search Suggestions is required/i.test(line))
+          .filter(line => !/^Learn more$/i.test(line));
+        return lines.join('\n').trim();
+      }
+
+      function parseVisibleTurns(sessionRoot) {
+        const turns = queryAllDeep('ms-chat-turn', sessionRoot || document);
+        return turns.map((turn, idx) => {
+          const container = findTurnContainer(turn);
+          if (!container) return null;
+          const role = container.classList.contains('user') ? 'user' : 'model';
+          const clone = container.cloneNode(true);
+          clone.querySelectorAll('.actions, ms-thought-chunk, ms-citations, ms-grounding-chip, ms-grounding-sources, button, svg, style, script, [class*=\"grounding\"]').forEach(el => el.remove());
+          const text = normalizeTurnText(clone.innerText || clone.textContent || '');
+          if (!text) return null;
+          const stableId = turn.getAttribute('data-turn-id')
+            || turn.getAttribute('data-message-id')
+            || container.getAttribute('data-turn-id')
+            || container.getAttribute('data-message-id')
+            || '';
+          return { role, text, stableId, idx };
+        }).filter(Boolean);
+      }
+
+      async function collectAllConversationTurns() {
+        const activeSession = getActiveChatSession();
+        if (!activeSession) return [];
+        const allTurnsInitial = queryAllDeep('ms-chat-turn', activeSession);
+        const scrollEl = findBestScrollElement(allTurnsInitial);
+        const originalScrollTop = scrollEl.scrollTop;
+        const collected = [];
+        const seenKeys = new Set();
+        const step = Math.max(Math.floor(scrollEl.clientHeight * 0.7), 220);
+        const maxIterations = 220;
+
+        scrollEl.scrollTop = 0;
+        await sleep(220);
+
+        for (let i = 0; i < maxIterations; i++) {
+          const visibleTurns = parseVisibleTurns(activeSession);
+          visibleTurns.forEach(turn => {
+            const contentKey = `${turn.role}|${turn.text}`;
+            const key = turn.stableId || contentKey;
+            if (seenKeys.has(key) || seenKeys.has(contentKey)) return;
+            seenKeys.add(key);
+            seenKeys.add(contentKey);
+            const last = collected[collected.length - 1];
+            if (last && last.role === turn.role && last.text === turn.text) return;
+            collected.push({ role: turn.role, text: turn.text });
+          });
+
+          const prevTop = scrollEl.scrollTop;
+          const maxTop = scrollEl.scrollHeight - scrollEl.clientHeight;
+          if (prevTop >= maxTop - 2) break;
+
+          scrollEl.scrollTop = Math.min(prevTop + step, maxTop);
+          await sleep(220);
+          if (scrollEl.scrollTop === prevTop) break;
+        }
+
+        scrollEl.scrollTop = originalScrollTop;
+        await sleep(40);
+        return collected;
+      }
+
+      function beautifyText(text) {
+        return (text || '')
+          .replace(/\s+\n/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .replace(/([.!?])(?=[^\s\n])/g, '$1 ')
+          .replace(/([,;])(?=[^\s\n])/g, '$1 ');
+      }
+
+      function buildConversationText(turns) {
+        return (turns || [])
+          .map(turn => `${turn.role === 'user' ? 'שאלתי:' : 'וענו לי:'}\n${beautifyText(turn.text)}`)
+          .join('\n\n')
+          .trim();
+      }
+
+      async function copyConversation() {
+        if (isCopyInProgress) return;
+        isCopyInProgress = true;
+        try {
+          const turns = await collectAllConversationTurns();
+          const textToCopy = buildConversationText(turns);
+          if (!textToCopy) { flashCopyButton('🤔'); return; }
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(textToCopy);
+          } else if (typeof GM_setClipboard === 'function') {
+            GM_setClipboard(textToCopy, { type: 'text', mimetype: 'text/plain' });
+          } else {
+            throw new Error('Clipboard API is not available');
+          }
+          flashCopyButton('✔️');
+        } catch (err) {
+          console.log('[AI Studio] Copy failed:', err);
+          flashCopyButton('❌');
+        } finally {
+          isCopyInProgress = false;
+        }
+      }
+
+      function flashCopyButton(icon) {
+        const btn = document.getElementById(COPY_BUTTON_ID);
+        if (!btn) return;
+        btn.textContent = icon;
+        setTimeout(() => {
+          const currentBtn = document.getElementById(COPY_BUTTON_ID);
+          if (currentBtn) currentBtn.textContent = '📋';
+        }, 1500);
+      }
+
+      function ensureCopyButton() {
+        if (document.getElementById(COPY_BUTTON_ID)) return;
+        const btn = document.createElement('button');
+        btn.id = COPY_BUTTON_ID;
+        btn.type = 'button';
+        btn.textContent = '📋';
+        btn.title = 'העתק את כל השיחה';
+        btn.setAttribute('aria-label', 'Copy full conversation');
+        btn.addEventListener('click', copyConversation);
+        document.body.appendChild(btn);
+      }
+
+      injectCopyButtonStyles();
+      ensureCopyButton();
+      const observer = new MutationObserver(ensureCopyButton);
+      observer.observe(document.body, { childList: true, subtree: true });
     })();
   }
 
