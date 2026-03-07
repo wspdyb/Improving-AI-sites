@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI Studio – משופר
 // @namespace    https://example.com/
-// @version      1.7.0
-// @description  פותח היסטוריה אוטומטית, סרגל-צד משופר, תיקוני RTL, בועות צבע, הפעלה אוטומטית של כלים ב”שיחה חדשה”, ושמירה אוטומטית של השיחה והתראות קוליות וחזותיות על הודעות AI חדשות.
+// @version      1.8.0
+// @description  פותח היסטוריה אוטומטית, סרגל-צד משופר, תיקוני RTL, בועות צבע, הפעלה אוטומטית של כלים ב”שיחה חדשה”, שמירה לקובץ, שמירה אוטומטית של השיחה והתראות קוליות וחזותיות על הודעות AI חדשות.
 // @author       Y-PLONI
 // @match        https://aistudio.google.com/*
 // @grant        GM_addStyle
@@ -68,7 +68,7 @@
         const span = document.createElement('span'); span.textContent = label;
         row.append(cb, span); panel.appendChild(row);
     };
-    addCheckbox('openHistoryOnLoad', 'פתח היסטוריה בהפעלה ראשונה'); addCheckbox('sidebar', 'הצג סרגל צד משופר'); addCheckbox('rtl', 'תקן RTL'); addCheckbox('bubbles', 'בועות צבע'); addCheckbox('autoSave', 'שמירה אוטומטית כל 5 שניות'); addCheckbox('aiMessageNotifications', 'התראות קוליות וחזותיות על הודעות AI חדשות'); addCheckbox('copyConversationButton', 'הצג כפתור "העתק שיחה"');
+    addCheckbox('openHistoryOnLoad', 'פתח היסטוריה בהפעלה ראשונה'); addCheckbox('sidebar', 'הצג סרגל צד משופר'); addCheckbox('rtl', 'תקן RTL'); addCheckbox('bubbles', 'בועות צבע'); addCheckbox('autoSave', 'שמירה אוטומטית כל 5 שניות'); addCheckbox('aiMessageNotifications', 'התראות קוליות וחזותיות על הודעות AI חדשות'); addCheckbox('copyConversationButton', 'הצג כפתורי "העתק שיחה" ו"שמור לקובץ"');
 
     const notifTitle = document.createElement('h4'); notifTitle.textContent = 'התראות'; notifTitle.style.margin = '12px 0 4px'; panel.appendChild(notifTitle);
     const notifBtn = document.createElement('button');
@@ -263,25 +263,33 @@
   }
 
   /*──────────────────────────────────
-    7. כפתור העתקת כל השיחה
+    7. כפתורי העתקה ושמירה
   ──────────────────────────────────*/
   if (settings.copyConversationButton) {
     (() => {
       'use strict';
+      const ACTIONS_CONTAINER_ID = 'ais-conversation-actions';
       const COPY_BUTTON_ID = 'ais-copy-conversation-button';
+      const MENU_TOGGLE_BUTTON_ID = 'ais-toggle-conversation-menu';
+      const ACTIONS_MENU_ID = 'ais-conversation-actions-menu';
+      const SAVE_BUTTON_ID = 'ais-save-conversation-button';
 
       function injectCopyButtonStyles() {
-        if (document.getElementById('ais-copy-conversation-style')) return;
+        const styleId = 'ais-copy-conversation-style';
+        if (document.getElementById(styleId)) return;
         const css = `
-          #${COPY_BUTTON_ID} {
+          #${ACTIONS_CONTAINER_ID} {
             position: fixed;
             top: 84px;
             right: 16px;
             z-index: 10001;
-            width: 36px;
+            display: inline-flex;
+            align-items: stretch;
+          }
+          #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID} {
+            height: 36px;
             height: 36px;
             border: 1px solid rgba(0,0,0,0.15);
-            border-radius: 10px;
             background: #ffffff;
             color: #1f1f1f;
             font-size: 18px;
@@ -289,21 +297,72 @@
             cursor: pointer;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
           }
-          #${COPY_BUTTON_ID}:hover { background: #f4f4f4; }
+          #${COPY_BUTTON_ID} {
+            min-width: 44px;
+            padding: 0 10px;
+            border-radius: 10px 0 0 10px;
+            border-right-width: 0;
+          }
+          #${MENU_TOGGLE_BUTTON_ID} {
+            min-width: 26px;
+            padding: 0 6px;
+            font-size: 14px;
+            border-radius: 0 10px 10px 0;
+          }
+          #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] { background: #f4f4f4; }
+          #${ACTIONS_MENU_ID} {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            min-width: 150px;
+            padding: 6px;
+            display: none;
+            flex-direction: column;
+            gap: 4px;
+            background: #ffffff;
+            border: 1px solid rgba(0,0,0,0.15);
+            border-radius: 12px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+          }
+          #${ACTIONS_MENU_ID}[data-open="true"] { display: flex; }
+          #${ACTIONS_MENU_ID} button {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 36px;
+            padding: 0 10px;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            text-align: right;
+            cursor: pointer;
+          }
+          #${ACTIONS_MENU_ID} button:hover { background: #f4f4f4; }
           @media (prefers-color-scheme: dark) {
-            #${COPY_BUTTON_ID} {
+            #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID} {
               background: #2b2b2b;
               color: #f3f3f3;
               border-color: rgba(255,255,255,0.2);
             }
-            #${COPY_BUTTON_ID}:hover { background: #3a3a3a; }
+            #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] { background: #3a3a3a; }
+            #${ACTIONS_MENU_ID} {
+              background: #2b2b2b;
+              border-color: rgba(255,255,255,0.2);
+            }
+            #${ACTIONS_MENU_ID} button:hover { background: #3a3a3a; }
           }
         `;
-        (typeof GM_addStyle === 'function') ? GM_addStyle(css) : (() => { const s = document.createElement('style'); s.id = 'ais-copy-conversation-style'; s.textContent = css; document.head.appendChild(s); })();
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = css;
+        document.head.appendChild(style);
       }
 
       const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-      let isCopyInProgress = false;
+      let isConversationActionInProgress = false;
 
       function getAllElementsDeep(root = document) {
         const out = [];
@@ -460,55 +519,207 @@
           .trim();
       }
 
-      async function copyConversation() {
-        if (isCopyInProgress) return;
-        isCopyInProgress = true;
+      function getConversationTitle() {
+        const rawTitle = (document.title || 'שיחת AI Studio')
+          .replace(/\s*[-|]\s*Google AI Studio\s*$/i, '')
+          .replace(/^Google AI Studio\s*[-|]\s*/i, '')
+          .trim();
+        return rawTitle || 'שיחת AI Studio';
+      }
+
+      function getExportDateParts() {
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const year = now.getFullYear();
+        const month = pad(now.getMonth() + 1);
+        const day = pad(now.getDate());
+        const hours = pad(now.getHours());
+        const minutes = pad(now.getMinutes());
+        return {
+          dateDots: `${day}.${month}.${year}`,
+          timeStr: `${hours}:${minutes}`,
+          fileStamp: `${year}-${month}-${day}_${hours}-${minutes}`
+        };
+      }
+
+      function sanitizeFilename(name) {
+        const fallback = 'שיחת AI Studio';
+        return (name || fallback)
+          .replace(/[\\/:*?"<>|]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 120) || fallback;
+      }
+
+      function downloadTextFile(text, fileName) {
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      }
+
+      function buildConversationExport(turns) {
+        const transcript = buildConversationText(turns);
+        if (!transcript) return null;
+        const title = getConversationTitle();
+        const { dateDots, timeStr, fileStamp } = getExportDateParts();
+        return {
+          transcript,
+          fileName: `${fileStamp} - ${sanitizeFilename(title)}.txt`,
+          fileText: [
+            `נושא: ${title}`,
+            `תאריך ייצוא: ${dateDots} | שעה: ${timeStr}`,
+            `קישור: ${window.location.href}`,
+            `${'='.repeat(60)}`,
+            '',
+            transcript
+          ].join('\n').trim()
+        };
+      }
+
+      async function runConversationAction(buttonId, handler) {
+        if (isConversationActionInProgress) return;
+        isConversationActionInProgress = true;
         try {
           const turns = await collectAllConversationTurns();
-          const textToCopy = buildConversationText(turns);
-          if (!textToCopy) { flashCopyButton('🤔'); return; }
-          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            await navigator.clipboard.writeText(textToCopy);
-          } else if (typeof GM_setClipboard === 'function') {
-            GM_setClipboard(textToCopy, { type: 'text', mimetype: 'text/plain' });
-          } else {
-            throw new Error('Clipboard API is not available');
-          }
-          flashCopyButton('✔️');
+          const exportPayload = buildConversationExport(turns);
+          if (!exportPayload) { flashActionButton(buttonId, '🤔'); return; }
+          await handler(exportPayload);
+          flashActionButton(buttonId, '✔️');
         } catch (err) {
-          console.log('[AI Studio] Copy failed:', err);
-          flashCopyButton('❌');
+          console.log('[AI Studio] Conversation action failed:', err);
+          flashActionButton(buttonId, '❌');
         } finally {
-          isCopyInProgress = false;
+          isConversationActionInProgress = false;
         }
       }
 
-      function flashCopyButton(icon) {
-        const btn = document.getElementById(COPY_BUTTON_ID);
+      async function copyConversation() {
+        await runConversationAction(COPY_BUTTON_ID, async ({ transcript }) => {
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(transcript);
+          } else if (typeof GM_setClipboard === 'function') {
+            GM_setClipboard(transcript, { type: 'text', mimetype: 'text/plain' });
+          } else {
+            throw new Error('Clipboard API is not available');
+          }
+        });
+      }
+
+      async function saveConversationToFile() {
+        await runConversationAction(SAVE_BUTTON_ID, async ({ fileText, fileName }) => {
+          downloadTextFile(fileText, fileName);
+        });
+      }
+
+      function isConversationMenuOpen() {
+        const menu = document.getElementById(ACTIONS_MENU_ID);
+        return menu ? menu.getAttribute('data-open') === 'true' : false;
+      }
+
+      function toggleConversationMenu(forceOpen) {
+        const menu = document.getElementById(ACTIONS_MENU_ID);
+        const toggleBtn = document.getElementById(MENU_TOGGLE_BUTTON_ID);
+        if (!menu || !toggleBtn) return;
+        const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : menu.getAttribute('data-open') !== 'true';
+        menu.setAttribute('data-open', shouldOpen ? 'true' : 'false');
+        toggleBtn.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+      }
+
+      function flashActionButton(buttonId, icon) {
+        const btn = document.getElementById(buttonId);
         if (!btn) return;
         btn.textContent = icon;
         setTimeout(() => {
-          const currentBtn = document.getElementById(COPY_BUTTON_ID);
-          if (currentBtn) currentBtn.textContent = '📋';
+          const currentBtn = document.getElementById(buttonId);
+          if (currentBtn) currentBtn.textContent = currentBtn.dataset.defaultIcon || '';
         }, 1500);
       }
 
-      function ensureCopyButton() {
-        if (document.getElementById(COPY_BUTTON_ID)) return;
-        const btn = document.createElement('button');
-        btn.id = COPY_BUTTON_ID;
+      function ensureActionButton(container, buttonId, icon, title, ariaLabel, handler) {
+        let btn = document.getElementById(buttonId);
+        if (btn && btn.parentElement !== container) {
+          btn.remove();
+          btn = null;
+        }
+        if (btn) return;
+        btn = document.createElement('button');
+        btn.id = buttonId;
         btn.type = 'button';
-        btn.textContent = '📋';
-        btn.title = 'העתק את כל השיחה';
-        btn.setAttribute('aria-label', 'Copy full conversation');
-        btn.addEventListener('click', copyConversation);
-        document.body.appendChild(btn);
+        btn.textContent = icon;
+        btn.dataset.defaultIcon = icon;
+        btn.title = title;
+        btn.setAttribute('aria-label', ariaLabel);
+        btn.addEventListener('click', handler);
+        container.appendChild(btn);
+      }
+
+      function ensureCopyButton() {
+        let container = document.getElementById(ACTIONS_CONTAINER_ID);
+        if (!container) {
+          container = document.createElement('div');
+          container.id = ACTIONS_CONTAINER_ID;
+          document.body.appendChild(container);
+        }
+        ensureActionButton(container, COPY_BUTTON_ID, '📋', 'העתק את כל השיחה', 'Copy full conversation', copyConversation);
+        ensureActionButton(container, MENU_TOGGLE_BUTTON_ID, '▾', 'אפשרויות נוספות', 'Conversation export options', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleConversationMenu(!isConversationMenuOpen());
+        });
+
+        let menu = document.getElementById(ACTIONS_MENU_ID);
+        if (menu && menu.parentElement !== container) {
+          menu.remove();
+          menu = null;
+        }
+        if (!menu) {
+          menu = document.createElement('div');
+          menu.id = ACTIONS_MENU_ID;
+          menu.setAttribute('data-open', 'false');
+          container.appendChild(menu);
+        }
+
+        let saveBtn = document.getElementById(SAVE_BUTTON_ID);
+        if (saveBtn && saveBtn.parentElement !== menu) {
+          saveBtn.remove();
+          saveBtn = null;
+        }
+        if (!saveBtn) {
+          saveBtn = document.createElement('button');
+          saveBtn.id = SAVE_BUTTON_ID;
+          saveBtn.type = 'button';
+          saveBtn.dataset.defaultIcon = '💾 שמור לקובץ';
+          saveBtn.textContent = saveBtn.dataset.defaultIcon;
+          saveBtn.title = 'שמור את כל השיחה לקובץ';
+          saveBtn.setAttribute('aria-label', 'Save full conversation');
+          saveBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleConversationMenu(false);
+            saveConversationToFile();
+          });
+          menu.appendChild(saveBtn);
+        }
       }
 
       injectCopyButtonStyles();
       ensureCopyButton();
       const observer = new MutationObserver(ensureCopyButton);
       observer.observe(document.body, { childList: true, subtree: true });
+      document.addEventListener('click', (event) => {
+        const container = document.getElementById(ACTIONS_CONTAINER_ID);
+        if (!container || container.contains(event.target)) return;
+        toggleConversationMenu(false);
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') toggleConversationMenu(false);
+      });
     })();
   }
 

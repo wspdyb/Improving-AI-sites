@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         כלי עזר משולבים וסרגל צד ל-ChatGPT.com
 // @namespace    http://tampermonkey.net/
-// @version      3.2.00
-// @description  משלב עיצוב בועות, RTL, העתקה, הסתרת "תוכניות", וסרגל צד Timeline דינמי מרובה עמודות, עם התאמה אישית, אופטימיזציות, ותמיכה במצב כהה. תיקונים לטבלאות ורשימות. (אופטימיזציות CPU/RAM + תיקון הסתרת תוכניות למשתמש חינמי)
+// @version      3.3.00
+// @description  משלב עיצוב בועות, RTL, העתקה, שמירה לקובץ, הסתרת "תוכניות", וסרגל צד Timeline דינמי מרובה עמודות, עם התאמה אישית, אופטימיזציות, ותמיכה במצב כהה. תיקונים לטבלאות ורשימות. (אופטימיזציות CPU/RAM + תיקון הסתרת תוכניות למשתמש חינמי)
 // @author       Y-PLONI
 // @match        *://chatgpt.com/*
 // @match        *://chat.openai.com/*
@@ -83,6 +83,11 @@
 
     const ACTIONS_CONTAINER_SELECTOR = '#conversation-header-actions';
     const SHARE_BUTTON_SELECTOR = 'button[data-testid="share-chat-button"]';
+    const SPLIT_BUTTON_WRAPPER_ID = 'chatgpt-conversation-actions';
+    const COPY_BUTTON_ID = 'copy-chatgpt-conversation';
+    const MENU_TOGGLE_BUTTON_ID = 'toggle-chatgpt-conversation-menu';
+    const ACTIONS_MENU_ID = 'chatgpt-conversation-actions-menu';
+    const SAVE_BUTTON_ID = 'save-chatgpt-conversation';
     const RETRY_MS = 500;
     const MAX_FIND_ACTIONS_CONTAINER_RETRIES = 10;
 
@@ -191,20 +196,75 @@
 
         if (currentSettings.enableCopyButton) {
             cssCopy += `
-                #copy-chatgpt-conversation {
+                #${SPLIT_BUTTON_WRAPPER_ID} {
+                    position: relative;
+                    display: inline-flex;
+                    align-items: stretch;
+                    height: 36px;
+                    margin-inline-end: 8px;
+                    order: -1;
+                }
+                #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID} {
                     display: flex; align-items: center; justify-content: center; height: 36px; min-width: 36px;
-                    padding: 0 8px; margin-inline-end: 8px;
+                    padding: 0 8px;
                     background-color: ${isDarkMode ? '#4A4D4F' : '#FFFFFF'} !important;
                     color: ${isDarkMode ? '#E0E0E0' : '#343A40'} !important;
                     font-size: 18px; line-height: 1;
                     border: 1px solid ${isDarkMode ? '#6A6D6F' : '#DEE2E6'} !important;
-                    border-radius: 6px; cursor: pointer;
-                    user-select: none; order: -1;
+                    cursor: pointer;
+                    user-select: none;
                     font-family: inherit;
                 }
-                #copy-chatgpt-conversation:hover {
+                #${COPY_BUTTON_ID} {
+                    min-width: 42px;
+                    border-radius: 6px 0 0 6px;
+                    border-inline-end-width: 0 !important;
+                }
+                #${MENU_TOGGLE_BUTTON_ID} {
+                    min-width: 24px;
+                    padding: 0 6px;
+                    font-size: 14px;
+                    border-radius: 0 6px 6px 0;
+                }
+                #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] {
                     background-color: ${isDarkMode ? '#5A5D5F' : '#F8F9FA'} !important;
                     border-color: ${isDarkMode ? '#7A7D7F' : '#CED4DA'} !important;
+                }
+                #${ACTIONS_MENU_ID} {
+                    position: fixed;
+                    min-width: 140px;
+                    padding: 6px;
+                    display: none;
+                    flex-direction: column;
+                    gap: 4px;
+                    background-color: ${isDarkMode ? '#2F3337' : '#FFFFFF'} !important;
+                    border: 1px solid ${isDarkMode ? '#6A6D6F' : '#DEE2E6'} !important;
+                    border-radius: 10px;
+                    box-shadow: 0 10px 30px rgba(0, 0, 0, ${isDarkMode ? '0.35' : '0.12'});
+                    z-index: 30;
+                }
+                #${ACTIONS_MENU_ID}[data-open="true"] {
+                    display: flex;
+                }
+                #${ACTIONS_MENU_ID} button {
+                    display: flex;
+                    align-items: center;
+                    justify-content: flex-start;
+                    gap: 8px;
+                    width: 100%;
+                    min-height: 34px;
+                    padding: 0 10px;
+                    background: transparent !important;
+                    color: inherit !important;
+                    border: 0 !important;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    font-family: inherit;
+                    text-align: right;
+                }
+                #${ACTIONS_MENU_ID} button:hover {
+                    background-color: ${isDarkMode ? '#464B50' : '#F3F4F6'} !important;
                 }
             `;
         }
@@ -229,8 +289,16 @@
 
     function initializeCopyButtonFeature() {
         if (copyButtonObserver) copyButtonObserver.disconnect(); copyButtonObserver = null;
-        const existingButton = document.getElementById('copy-chatgpt-conversation');
-        if (existingButton) existingButton.remove();
+        const existingWrapper = document.getElementById(SPLIT_BUTTON_WRAPPER_ID);
+        const existingCopyButton = document.getElementById(COPY_BUTTON_ID);
+        const existingSaveButton = document.getElementById(SAVE_BUTTON_ID);
+        const existingToggleButton = document.getElementById(MENU_TOGGLE_BUTTON_ID);
+        const existingMenu = document.getElementById(ACTIONS_MENU_ID);
+        if (existingWrapper) existingWrapper.remove();
+        if (existingCopyButton) existingCopyButton.remove();
+        if (existingSaveButton) existingSaveButton.remove();
+        if (existingToggleButton) existingToggleButton.remove();
+        if (existingMenu) existingMenu.remove();
 
         if (currentSettings.enableCopyButton) {
             debugLog('CopyButton - Initializing.');
@@ -240,7 +308,7 @@
             if (!window.__cgptCopyBtnBodyObserver) {
                 window.__cgptCopyBtnBodyObserver = new MutationObserver(() => {
                     if (!currentSettings.enableCopyButton || !pageVisible) return;
-                    if (!document.getElementById('copy-chatgpt-conversation') &&
+                    if ((!document.getElementById(SPLIT_BUTTON_WRAPPER_ID) || !document.getElementById(COPY_BUTTON_ID) || !document.getElementById(MENU_TOGGLE_BUTTON_ID)) &&
                         document.querySelector(ACTIONS_CONTAINER_SELECTOR)) {
                         debugLog('CopyButton - Body observer detected missing button. Re-initializing.');
                         attemptToSetupCopyButtonObserver();
@@ -300,7 +368,11 @@
     }
     function ensureCopyButtonPresent(container) {
         if (!currentSettings.enableCopyButton || !container || !document.body.contains(container)) {
-            const btn = document.getElementById('copy-chatgpt-conversation'); if (btn) btn.remove();
+            const wrapper = document.getElementById(SPLIT_BUTTON_WRAPPER_ID); if (wrapper) wrapper.remove();
+            const copyBtn = document.getElementById(COPY_BUTTON_ID); if (copyBtn) copyBtn.remove();
+            const toggleBtn = document.getElementById(MENU_TOGGLE_BUTTON_ID); if (toggleBtn) toggleBtn.remove();
+            const menu = document.getElementById(ACTIONS_MENU_ID); if (menu) menu.remove();
+            const saveBtn = document.getElementById(SAVE_BUTTON_ID); if (saveBtn) saveBtn.remove();
             return;
         }
         const shareButtonOriginal = container.querySelector(SHARE_BUTTON_SELECTOR);
@@ -308,60 +380,244 @@
             // debugLog('CopyButton - Share button not found in container, possibly transient.'); // Can be verbose
             return;
         }
-        let copyBtn = document.getElementById('copy-chatgpt-conversation');
-        if (copyBtn && container.contains(copyBtn) && copyBtn.nextSibling === shareButtonOriginal) return;
+        let wrapper = document.getElementById(SPLIT_BUTTON_WRAPPER_ID);
+        let copyBtn = document.getElementById(COPY_BUTTON_ID);
+        let toggleBtn = document.getElementById(MENU_TOGGLE_BUTTON_ID);
+        let menu = document.getElementById(ACTIONS_MENU_ID);
+        let saveBtn = document.getElementById(SAVE_BUTTON_ID);
+        if (wrapper && container.contains(wrapper) && wrapper.nextSibling === shareButtonOriginal && copyBtn && toggleBtn && menu && saveBtn) return;
+        if (wrapper) { wrapper.remove(); debugLog('SplitButton - Removed existing wrapper (misplaced/detached).'); }
         if (copyBtn) { copyBtn.remove(); debugLog('CopyButton - Removed existing (misplaced/detached).'); }
+        if (toggleBtn) { toggleBtn.remove(); debugLog('ToggleButton - Removed existing (misplaced/detached).'); }
+        if (menu) { menu.remove(); debugLog('Menu - Removed existing (misplaced/detached).'); }
+        if (saveBtn) { saveBtn.remove(); debugLog('SaveButton - Removed existing (misplaced/detached).'); }
+        wrapper = document.createElement('div');
+        wrapper.id = SPLIT_BUTTON_WRAPPER_ID;
         copyBtn = document.createElement('button');
-        copyBtn.id = 'copy-chatgpt-conversation';
+        copyBtn.id = COPY_BUTTON_ID;
         copyBtn.textContent = '📋';
         copyBtn.title = 'העתק את השיחה';
         copyBtn.addEventListener('click', copyConversation);
-        container.insertBefore(copyBtn, shareButtonOriginal);
+        toggleBtn = document.createElement('button');
+        toggleBtn.id = MENU_TOGGLE_BUTTON_ID;
+        toggleBtn.type = 'button';
+        toggleBtn.textContent = '▾';
+        toggleBtn.title = 'אפשרויות נוספות';
+        toggleBtn.setAttribute('aria-label', 'Conversation export options');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleConversationMenu(!isConversationMenuOpen());
+        });
+        menu = document.createElement('div');
+        menu.id = ACTIONS_MENU_ID;
+        menu.setAttribute('data-open', 'false');
+        saveBtn = document.createElement('button');
+        saveBtn.id = SAVE_BUTTON_ID;
+        saveBtn.type = 'button';
+        saveBtn.textContent = '💾 שמור לקובץ';
+        saveBtn.title = 'שמור את השיחה לקובץ';
+        saveBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleConversationMenu(false);
+            saveConversationToFile();
+        });
+        menu.appendChild(saveBtn);
+        wrapper.appendChild(copyBtn);
+        wrapper.appendChild(toggleBtn);
+        document.body.appendChild(menu);
+        container.insertBefore(wrapper, shareButtonOriginal);
         debugLog('CopyButton - Injected/Re-injected.');
     }
+    function isConversationMenuOpen() {
+        const menu = document.getElementById(ACTIONS_MENU_ID);
+        return menu ? menu.getAttribute('data-open') === 'true' : false;
+    }
+    function toggleConversationMenu(forceOpen) {
+        const menu = document.getElementById(ACTIONS_MENU_ID);
+        const toggleBtn = document.getElementById(MENU_TOGGLE_BUTTON_ID);
+        if (!menu || !toggleBtn) return;
+        const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : menu.getAttribute('data-open') !== 'true';
+        if (shouldOpen) positionConversationMenu(toggleBtn, menu);
+        menu.setAttribute('data-open', shouldOpen ? 'true' : 'false');
+        toggleBtn.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+    }
+    function positionConversationMenu(toggleBtn, menu) {
+        if (!toggleBtn || !menu) return;
+        const rect = toggleBtn.getBoundingClientRect();
+        const menuWidth = Math.max(menu.offsetWidth || 0, 140);
+        const viewportPadding = 8;
+        const left = Math.min(
+            Math.max(rect.right - menuWidth, viewportPadding),
+            window.innerWidth - menuWidth - viewportPadding
+        );
+        const top = Math.min(rect.bottom + 6, window.innerHeight - viewportPadding);
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+    }
 
-    function buildConversationText() {
-        const conversationTurns = document.querySelectorAll('article[data-testid^="conversation-turn-"]');
-        let output = '';
-        conversationTurns.forEach((turn) => {
-            const userMessageBlock = turn.querySelector('div[data-message-author-role="user"]');
-            const assistantMessageBlock = turn.querySelector('div[data-message-author-role="assistant"]');
-            let role = '', text = '';
-            if (userMessageBlock) {
-                role = 'user';
-                const textElement = userMessageBlock.querySelector('.whitespace-pre-wrap');
-                text = textElement ? textElement.textContent.trim() : userMessageBlock.textContent.trim(); // OPTIMIZED
-            } else if (assistantMessageBlock) {
-                role = 'assistant';
-                const markdownProseElement = assistantMessageBlock.querySelector('.markdown.prose');
-                if (markdownProseElement) {
-                    text = markdownProseElement.textContent.trim(); // OPTIMIZED
-                } else {
-                    const fallbackTextElement = assistantMessageBlock.querySelector('div[data-message-id] > div > div:not([class*="agent-verification"])');
-                    text = fallbackTextElement ? fallbackTextElement.textContent.trim() : assistantMessageBlock.textContent.trim(); // OPTIMIZED
-                }
-            }
-            if (text) output += (role === 'user' ? 'שאלתי:\n' : 'וענו לי:\n') + text + '\n\n';
+    function getConversationTitle() {
+        const titleCandidates = [
+            document.querySelector('main h1'),
+            document.querySelector('header h1'),
+            document.querySelector('nav a[aria-current="page"]'),
+            document.querySelector('nav button[aria-current="page"]')
+        ].map((el) => el?.textContent?.trim()).filter(Boolean);
+        const rawTitle = titleCandidates[0] || document.title || 'שיחת ChatGPT';
+        const normalizedTitle = rawTitle
+            .replace(/\s*[-|]\s*ChatGPT\s*$/i, '')
+            .replace(/^ChatGPT\s*[-|]\s*/i, '')
+            .replace(/\bChatGPT\b/gi, '')
+            .trim();
+        return normalizedTitle || 'שיחת ChatGPT';
+    }
+    function getExportDateParts() {
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const year = now.getFullYear();
+        const month = pad(now.getMonth() + 1);
+        const day = pad(now.getDate());
+        const hours = pad(now.getHours());
+        const minutes = pad(now.getMinutes());
+        return {
+            dateDots: `${day}.${month}.${year}`,
+            timeStr: `${hours}:${minutes}`,
+            fileStamp: `${year}-${month}-${day}_${hours}-${minutes}`
+        };
+    }
+    function sanitizeFilename(name) {
+        const fallback = 'שיחת ChatGPT';
+        return (name || fallback)
+            .replace(/[\\/:*?"<>|]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 120) || fallback;
+    }
+    function extractConversationMessageText(messageBlock, role) {
+        if (!messageBlock) return '';
+        if (role === 'user') {
+            const textElement = messageBlock.querySelector('.whitespace-pre-wrap');
+            return (textElement ? textElement.textContent : messageBlock.textContent).trim();
+        }
+
+        const markdownContainers = messageBlock.querySelectorAll('.markdown.prose, .prose');
+        if (markdownContainers.length) {
+            return Array.from(markdownContainers)
+                .map((el) => (el.textContent || '').trim())
+                .filter(Boolean)
+                .join('\n\n')
+                .trim();
+        }
+
+        const fallbackTextElement = messageBlock.querySelector('.text-token-text-primary') ||
+            messageBlock.querySelector('div[data-message-id] > div > div:not([class*="agent-verification"])');
+        return (fallbackTextElement ? fallbackTextElement.textContent : messageBlock.textContent).trim();
+    }
+    function collectConversationTurns() {
+        const messageBlocks = Array.from(document.querySelectorAll('main div[data-message-author-role][data-message-id]'));
+        const turns = [];
+        const seenKeys = new Set();
+
+        messageBlocks.forEach((messageBlock) => {
+            const role = messageBlock.getAttribute('data-message-author-role');
+            const messageId = messageBlock.getAttribute('data-message-id') || '';
+            if (role !== 'user' && role !== 'assistant') return;
+
+            const key = `${role}:${messageId}`;
+            if (messageId && seenKeys.has(key)) return;
+            if (messageId) seenKeys.add(key);
+
+            const text = extractConversationMessageText(messageBlock, role);
+            if (text) turns.push({ role, text });
         });
-        return output.trim();
+        return turns;
+    }
+    function buildConversationText() {
+        return collectConversationTurns()
+            .map(({ role, text }) => `${role === 'user' ? 'שאלתי:' : 'וענו לי:'}\n${text}`)
+            .join('\n\n')
+            .trim();
+    }
+    function buildConversationFileText(conversationText) {
+        if (!conversationText) return '';
+        const title = getConversationTitle();
+        const { dateDots, timeStr } = getExportDateParts();
+        return [
+            `נושא: ${title}`,
+            `תאריך ייצוא: ${dateDots} | שעה: ${timeStr}`,
+            `קישור: ${window.location.href}`,
+            `${'='.repeat(60)}`,
+            '',
+            conversationText
+        ].join('\n').trim();
+    }
+    function downloadTextFile(text, fileName) {
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     }
     async function copyConversation() {
-        const textToCopy = buildConversationText(); if (!textToCopy) { flashIcon('🤔'); return; }
+        const textToCopy = buildConversationText(); if (!textToCopy) { flashButtonIcon(COPY_BUTTON_ID, '🤔'); return; }
         try {
             if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') await navigator.clipboard.writeText(textToCopy);
             else if (typeof GM_setClipboard === 'function') GM_setClipboard(textToCopy, { type: 'text', mimetype: 'text/plain' });
             else throw new Error('Clipboard API not available');
-            flashIcon('✔️');
+            flashButtonIcon(COPY_BUTTON_ID, '✔️');
         } catch (err) {
-            debugError('CopyButton - Copy failed:', err); flashIcon('❌');
+            debugError('CopyButton - Copy failed:', err); flashButtonIcon(COPY_BUTTON_ID, '❌');
             if (typeof GM_notification === 'function') GM_notification({ title: 'שגיאת העתקה', text: `ההעתקה נכשלה: ${err.message}`, silent: true, timeout: 8000 });
         }
     }
-    function flashIcon(str) {
-        const btn = document.getElementById('copy-chatgpt-conversation'); if (!btn) return;
-        const originalContent = '📋'; btn.textContent = str;
-        setTimeout(() => { const cb = document.getElementById('copy-chatgpt-conversation'); if(cb) cb.textContent = originalContent; }, 1500);
+    function saveConversationToFile() {
+        const conversationText = buildConversationText();
+        if (!conversationText) { flashButtonIcon(SAVE_BUTTON_ID, '🤔'); return; }
+        try {
+            const fileText = buildConversationFileText(conversationText);
+            const { fileStamp } = getExportDateParts();
+            const fileName = `${fileStamp} - ${sanitizeFilename(getConversationTitle())}.txt`;
+            downloadTextFile(fileText, fileName);
+            flashButtonIcon(SAVE_BUTTON_ID, '✔️');
+        } catch (err) {
+            debugError('SaveButton - Save failed:', err); flashButtonIcon(SAVE_BUTTON_ID, '❌');
+            if (typeof GM_notification === 'function') GM_notification({ title: 'שגיאת שמירה', text: `השמירה נכשלה: ${err.message}`, silent: true, timeout: 8000 });
+        }
     }
+    function flashButtonIcon(buttonId, str) {
+        const btn = document.getElementById(buttonId); if (!btn) return;
+        const originalContent = buttonId === SAVE_BUTTON_ID ? '💾 שמור לקובץ' : '📋'; btn.textContent = str;
+        setTimeout(() => {
+            const currentButton = document.getElementById(buttonId);
+            if (currentButton) currentButton.textContent = originalContent;
+        }, 1500);
+    }
+    document.addEventListener('click', (event) => {
+        const wrapper = document.getElementById(SPLIT_BUTTON_WRAPPER_ID);
+        if (!wrapper || wrapper.contains(event.target)) return;
+        toggleConversationMenu(false);
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') toggleConversationMenu(false);
+    });
+    window.addEventListener('resize', () => {
+        if (!isConversationMenuOpen()) return;
+        const toggleBtn = document.getElementById(MENU_TOGGLE_BUTTON_ID);
+        const menu = document.getElementById(ACTIONS_MENU_ID);
+        positionConversationMenu(toggleBtn, menu);
+    });
+    window.addEventListener('scroll', () => {
+        if (!isConversationMenuOpen()) return;
+        const toggleBtn = document.getElementById(MENU_TOGGLE_BUTTON_ID);
+        const menu = document.getElementById(ACTIONS_MENU_ID);
+        positionConversationMenu(toggleBtn, menu);
+    }, true);
 
     function findAndHidePlansButton() {
         if (!currentSettings.enableHidePlansButton) return false;
@@ -1482,7 +1738,7 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
             dialog.innerHTML = `
                 <h3 style="margin-top:0; margin-bottom:20px; border-bottom: 1px solid #eee; padding-bottom:10px; font-size: 1.2em;">הגדרות כלי עזר וסרגל צד</h3>
                 <div style="margin-bottom: 12px;"><input type="checkbox" id="setting-enable-styling" style="margin-left: 8px; vertical-align: middle;"><label for="setting-enable-styling" style="vertical-align: middle; cursor:pointer;">הפעל עיצוב בועות ו-RTL</label></div>
-                <div style="margin-bottom: 12px;"><input type="checkbox" id="setting-enable-copy-button" style="margin-left: 8px; vertical-align: middle;"><label for="setting-enable-copy-button" style="vertical-align: middle; cursor:pointer;">הפעל כפתור "העתק שיחה"</label></div>
+                <div style="margin-bottom: 12px;"><input type="checkbox" id="setting-enable-copy-button" style="margin-left: 8px; vertical-align: middle;"><label for="setting-enable-copy-button" style="vertical-align: middle; cursor:pointer;">הפעל כפתורי "העתק שיחה" ו"שמור לקובץ"</label></div>
                 <div style="margin-bottom: 12px;"><input type="checkbox" id="setting-enable-hide-plans" style="margin-left: 8px; vertical-align: middle;"><label for="setting-enable-hide-plans" style="vertical-align: middle; cursor:pointer;">הסתר את כפתור "הצג תוכניות"</label></div>
                 <div style="margin-bottom: 12px;"><input type="checkbox" id="setting-enable-timeline-sidebar" style="margin-left: 8px; vertical-align: middle;"><label for="setting-enable-timeline-sidebar" style="vertical-align: middle; cursor:pointer;">הפעל סרגל צד לניווט (Timeline)</label></div>
                 <div style="margin-bottom: 20px;"><input type="checkbox" id="setting-enable-ai-notifications" style="margin-left: 8px; vertical-align: middle;"><label for="setting-enable-ai-notifications" style="vertical-align: middle; cursor:pointer;">הפעל התראות קוליות וחזותיות על הודעות AI חדשות</label></div>
