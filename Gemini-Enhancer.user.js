@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini – משופר
 // @namespace    https://example.com/
-// @version      1.0.0
+// @version      1.0.2
 // @description  סרגל ניווט לשיחה, RTL משופר, בועות שיחה, ייצוא שיחה והתראות על תשובות חדשות ב-Gemini.
 // @author       Y-PLONI
 // @match        https://gemini.google.com/*
@@ -36,14 +36,25 @@
   const ACTIONS_MENU_ID = 'gemini-conversation-actions-menu';
   const SAVE_BUTTON_ID = 'gemini-save-conversation';
   const SETTINGS_DIALOG_ID = 'gemini-enhancer-settings';
+  const QUOTE_POPUP_ID = 'gemini-selection-quote-popup';
+  const QUOTE_BUTTON_ID = 'gemini-selection-quote-button';
 
   let messages = [];
   let currentMessageIndex = -1;
   let lastAssistantSignature = '';
   let notificationInitialized = false;
+  let quotePopup = null;
+  const DEBUG_QUOTES = true;
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
 
   function saveSettings() {
     GM_setValue(SETTINGS_KEY, settings);
+  }
+
+  function quoteLog(...args) {
+    if (!DEBUG_QUOTES) return;
+    console.log('[Gemini Quote]', ...args);
   }
 
   function debounce(fn, wait) {
@@ -424,6 +435,45 @@
         background:#f8fafc;
         color:#0f172a;
       }
+      #${QUOTE_POPUP_ID}{
+        position:fixed;
+        top:0;
+        left:0;
+        z-index:10001;
+        opacity:0;
+        pointer-events:none;
+        transform:translate(-50%, -8px) scale(.96);
+        transition:opacity .14s ease, transform .14s ease;
+      }
+      #${QUOTE_POPUP_ID}[data-visible="true"]{
+        opacity:1;
+        pointer-events:auto;
+        transform:translate(-50%, -14px) scale(1);
+      }
+      #${QUOTE_BUTTON_ID}{
+        display:inline-flex;
+        align-items:center;
+        gap:10px;
+        border:none;
+        border-radius:999px;
+        padding:12px 18px 12px 16px;
+        background:rgba(255,255,255,.96);
+        color:#202123;
+        cursor:pointer;
+        box-shadow:0 10px 30px rgba(15,23,42,.18), 0 2px 10px rgba(15,23,42,.12), inset 0 0 0 1px rgba(148,163,184,.2);
+        backdrop-filter:blur(10px);
+        -webkit-backdrop-filter:blur(10px);
+        font:600 15px/1.1 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        white-space:nowrap;
+      }
+      #${QUOTE_BUTTON_ID}:hover{background:#fff}
+      #${QUOTE_BUTTON_ID}:active{transform:scale(.98)}
+      #${QUOTE_BUTTON_ID} svg{
+        width:18px;
+        height:18px;
+        fill:currentColor;
+        flex:0 0 auto;
+      }
       @media (prefers-color-scheme: dark){
         #${SIDEBAR_ID} .gemini-sidebar-column::before{
           background:linear-gradient(180deg, rgba(100,116,139,.14), rgba(148,163,184,.4), rgba(100,116,139,.14));
@@ -443,6 +493,12 @@
         #${MENU_TOGGLE_BUTTON_ID}{border-inline-start-color:rgba(148,163,184,.18)}
         #${ACTIONS_MENU_ID}{background:#0f172a;border-color:rgba(100,116,139,.35)}
         #${ACTIONS_MENU_ID} button{background:#111827;color:#e5e7eb}
+        #${QUOTE_BUTTON_ID}{
+          background:rgba(45,45,52,.96);
+          color:#f3f4f6;
+          box-shadow:0 12px 28px rgba(2,6,23,.48), 0 2px 10px rgba(2,6,23,.3), inset 0 0 0 1px rgba(255,255,255,.08);
+        }
+        #${QUOTE_BUTTON_ID}:hover{background:rgba(58,58,66,.98)}
       }
     `);
   }
@@ -587,6 +643,251 @@
       console.log('[Gemini] Save failed:', error);
       flashActionButton(SAVE_BUTTON_ID, '❌');
     }
+  }
+
+  function getEditorElement() {
+    return document.querySelector('rich-textarea .ql-editor[contenteditable="true"], .ql-editor[contenteditable="true"]');
+  }
+
+  function getElementFromNode(node) {
+    if (!node) return null;
+    if (node.nodeType === Node.ELEMENT_NODE) return node;
+    if (node.parentElement) return node.parentElement;
+    if (node.parentNode && node.parentNode.nodeType === Node.ELEMENT_NODE) return node.parentNode;
+    return null;
+  }
+
+  function closestAcrossShadow(node, selector) {
+    let current = getElementFromNode(node) || node;
+    while (current) {
+      if (current.nodeType === Node.ELEMENT_NODE && typeof current.matches === 'function' && current.matches(selector)) {
+        return current;
+      }
+      if (current.nodeType === Node.ELEMENT_NODE && typeof current.closest === 'function') {
+        const match = current.closest(selector);
+        if (match) return match;
+      }
+      const root = current.getRootNode?.();
+      if (root?.host) {
+        current = root.host;
+      } else {
+        current = current.parentNode;
+      }
+    }
+    return null;
+  }
+
+  function formatQuoteForPrompt(text) {
+    const normalized = cleanText(text).replace(/\n/g, '\n> ');
+    return normalized ? `> ${normalized}\n\n` : '';
+  }
+
+  function insertTextIntoEditor(text) {
+    const editor = getEditorElement();
+    if (!editor) {
+      quoteLog('Editor not found while trying to insert quote');
+      return false;
+    }
+
+    editor.focus();
+    const selection = window.getSelection();
+    if (selection) selection.removeAllRanges();
+
+    const payload = formatQuoteForPrompt(text);
+    if (!payload) {
+      quoteLog('Selection text was empty after normalization');
+      return false;
+    }
+
+    if (document.execCommand('insertText', false, payload)) {
+      quoteLog('Inserted quote via execCommand');
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: payload }));
+      return true;
+    }
+
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    if (selection) {
+      selection.addRange(range);
+    }
+
+    const textNode = document.createTextNode(payload);
+    range.insertNode(textNode);
+    range.setStartAfter(textNode);
+    range.collapse(true);
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: payload }));
+    quoteLog('Inserted quote via Range fallback');
+    return true;
+  }
+
+  function ensureQuotePopup() {
+    if (quotePopup?.isConnected) return quotePopup;
+
+    quotePopup = document.createElement('div');
+    quotePopup.id = QUOTE_POPUP_ID;
+    quotePopup.setAttribute('data-visible', 'false');
+
+    const button = document.createElement('button');
+    button.id = QUOTE_BUTTON_ID;
+    button.type = 'button';
+    button.setAttribute('aria-label', 'צטט ושלח ל-Gemini');
+    button.append(createQuoteIcon(), createQuoteLabel('Ask Gemini'));
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const selectedText = getCurrentAssistantSelectionText();
+      hideQuotePopup();
+      if (!selectedText) return;
+      if (insertTextIntoEditor(selectedText)) {
+        flashTransientLabel(button, 'Quoted');
+      }
+    });
+
+    quotePopup.appendChild(button);
+    document.body.appendChild(quotePopup);
+    quoteLog('Quote popup created');
+    return quotePopup;
+  }
+
+  function createQuoteIcon() {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', 'M10.53 6.47C7.27 7.66 5 10.44 5 13.28 5 15.68 6.56 17 8.35 17c1.81 0 3.07-1.28 3.07-2.95 0-1.66-1.12-2.8-2.63-2.8-.28 0-.57.04-.87.13.34-1.31 1.67-2.93 3.26-3.75l-.65-1.16zm8 0C15.27 7.66 13 10.44 13 13.28 13 15.68 14.56 17 16.35 17c1.81 0 3.07-1.28 3.07-2.95 0-1.66-1.12-2.8-2.63-2.8-.28 0-.57.04-.87.13.34-1.31 1.67-2.93 3.26-3.75l-.65-1.16z');
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function createQuoteLabel(text) {
+    const label = document.createElement('span');
+    label.textContent = text;
+    return label;
+  }
+
+  function flashTransientLabel(button, label) {
+    const labelNode = button.querySelector('span');
+    if (!labelNode) return;
+    const original = labelNode.textContent;
+    labelNode.textContent = label;
+    setTimeout(() => {
+      if (labelNode.isConnected) labelNode.textContent = original;
+    }, 1200);
+  }
+
+  function hideQuotePopup() {
+    if (!quotePopup) return;
+    quotePopup.setAttribute('data-visible', 'false');
+  }
+
+  function isRangeInsideAssistantMessage(range) {
+    if (!range) return false;
+    const startNode = range.startContainer;
+    const endNode = range.endContainer;
+    const commonNode = range.commonAncestorContainer;
+    const startElement = getElementFromNode(startNode);
+    const endElement = getElementFromNode(endNode);
+    const commonElement = getElementFromNode(commonNode);
+
+    if (!startElement && !endElement && !commonElement) {
+      quoteLog('Selection rejected: no resolvable element from range');
+      return false;
+    }
+
+    if (
+      closestAcrossShadow(startNode, 'rich-textarea, .ql-editor, user-query') ||
+      closestAcrossShadow(endNode, 'rich-textarea, .ql-editor, user-query') ||
+      closestAcrossShadow(commonNode, 'rich-textarea, .ql-editor, user-query')
+    ) {
+      quoteLog('Selection rejected: inside editor or user message');
+      return false;
+    }
+
+    if (
+      closestAcrossShadow(startNode, 'pre, code, .code-block, button, a') ||
+      closestAcrossShadow(endNode, 'pre, code, .code-block, button, a') ||
+      closestAcrossShadow(commonNode, 'pre, code, .code-block, button, a')
+    ) {
+      quoteLog('Selection rejected: inside code/button/link');
+      return false;
+    }
+
+    const assistantRoot = closestAcrossShadow(startNode, 'model-response')
+      || closestAcrossShadow(endNode, 'model-response')
+      || closestAcrossShadow(commonNode, 'model-response')
+      || closestAcrossShadow(startNode, '[data-response-id], .response-container, message-content')
+      || closestAcrossShadow(endNode, '[data-response-id], .response-container, message-content')
+      || closestAcrossShadow(commonNode, '[data-response-id], .response-container, message-content');
+
+    if (!assistantRoot) {
+      quoteLog('Selection rejected: assistant container not found', {
+        start: startElement?.tagName,
+        end: endElement?.tagName,
+        common: commonElement?.tagName
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  function getCurrentAssistantSelectionText() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return '';
+
+    const range = selection.getRangeAt(0);
+    if (!isRangeInsideAssistantMessage(range)) return '';
+
+    return cleanText(selection.toString());
+  }
+
+  function updateQuotePopupPosition() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      quoteLog('No active selection');
+      hideQuotePopup();
+      return;
+    }
+
+    const text = getCurrentAssistantSelectionText();
+    if (!text || text.length < 2) {
+      quoteLog('Selection ignored', {
+        textLength: text.length,
+        collapsed: selection.isCollapsed,
+        anchorTag: getElementFromNode(selection.anchorNode)?.tagName,
+        focusTag: getElementFromNode(selection.focusNode)?.tagName
+      });
+      hideQuotePopup();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) {
+      quoteLog('Selection has no visible rect');
+      hideQuotePopup();
+      return;
+    }
+
+    const popup = ensureQuotePopup();
+    const margin = 12;
+    const minX = 110;
+    const maxX = window.innerWidth - 110;
+    const x = Math.max(minX, Math.min(maxX, rect.left + (rect.width / 2)));
+    const y = Math.max(18, rect.top - margin);
+
+    popup.style.left = `${Math.round(x)}px`;
+    popup.style.top = `${Math.round(y)}px`;
+    popup.setAttribute('data-visible', 'true');
+    quoteLog('Popup shown', { text: text.slice(0, 80), x: Math.round(x), y: Math.round(y) });
   }
 
   function ensureActionButtons() {
@@ -792,6 +1093,7 @@
 
     window.addEventListener('scroll', debounce(updateSidebarActiveState, 50), true);
     window.addEventListener('resize', debouncedRefresh);
+    window.addEventListener('scroll', hideQuotePopup, true);
 
     document.addEventListener('click', (event) => {
       const container = document.getElementById(ACTIONS_CONTAINER_ID);
@@ -800,7 +1102,32 @@
     });
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') toggleConversationMenu(false);
+      if (event.key === 'Escape') {
+        toggleConversationMenu(false);
+        hideQuotePopup();
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      setTimeout(updateQuotePopupPosition, 10);
+    });
+
+    document.addEventListener('keyup', () => {
+      setTimeout(updateQuotePopupPosition, 10);
+    });
+
+    document.addEventListener('selectionchange', debounce(() => {
+      const active = document.activeElement;
+      if (active?.closest?.('rich-textarea, .ql-editor')) {
+        hideQuotePopup();
+        return;
+      }
+      updateQuotePopupPosition();
+    }, 40));
+
+    document.addEventListener('mousedown', (event) => {
+      if (quotePopup?.contains(event.target)) return;
+      hideQuotePopup();
     });
   }
 

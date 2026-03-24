@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Studio – משופר
 // @namespace    https://example.com/
-// @version      1.8.0
+// @version      1.9.2
 // @description  פותח היסטוריה אוטומטית, סרגל-צד משופר, תיקוני RTL, בועות צבע, הפעלה אוטומטית של כלים ב”שיחה חדשה”, שמירה לקובץ, שמירה אוטומטית של השיחה והתראות קוליות וחזותיות על הודעות AI חדשות.
 // @author       Y-PLONI
 // @match        https://aistudio.google.com/*
@@ -783,5 +783,317 @@
       });
     })();
   }
+
+  /*──────────────────────────────────
+    8. כפתור ציטוט בבחירת טקסט
+  ──────────────────────────────────*/
+  (() => {
+    'use strict';
+
+    const QUOTE_POPUP_ID = 'ais-selection-quote-popup';
+    const QUOTE_BUTTON_ID = 'ais-selection-quote-button';
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    let quotePopup = null;
+
+    function getAllElementsDeep(root = document) {
+      const out = [];
+      const stack = [root];
+      while (stack.length) {
+        const node = stack.pop();
+        if (!node) continue;
+        const children = node.children ? Array.from(node.children) : [];
+        for (const child of children) {
+          out.push(child);
+          stack.push(child);
+          if (child.shadowRoot) stack.push(child.shadowRoot);
+        }
+      }
+      return out;
+    }
+
+    function findDeep(selector, root = document) {
+      return getAllElementsDeep(root).find(el => el.matches && el.matches(selector)) || null;
+    }
+
+    function getElementFromNode(node) {
+      if (!node) return null;
+      if (node.nodeType === Node.ELEMENT_NODE) return node;
+      if (node.parentElement) return node.parentElement;
+      if (node.parentNode && node.parentNode.nodeType === Node.ELEMENT_NODE) return node.parentNode;
+      return null;
+    }
+
+    function closestAcrossShadow(node, selector) {
+      let current = getElementFromNode(node) || node;
+      while (current) {
+        if (current.nodeType === Node.ELEMENT_NODE && typeof current.matches === 'function' && current.matches(selector)) {
+          return current;
+        }
+        if (current.nodeType === Node.ELEMENT_NODE && typeof current.closest === 'function') {
+          const match = current.closest(selector);
+          if (match) return match;
+        }
+        const root = current.getRootNode?.();
+        if (root?.host) {
+          current = root.host;
+        } else {
+          current = current.parentNode;
+        }
+      }
+      return null;
+    }
+
+    function cleanText(text) {
+      return (text || '')
+        .replace(/\u200f|\u200e/g, '')
+        .replace(/\s+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+    }
+
+    function injectQuoteStyles() {
+      const styleId = 'ais-selection-quote-style';
+      if (document.getElementById(styleId)) return;
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        #${QUOTE_POPUP_ID}{
+          position:fixed;
+          top:0;
+          left:0;
+          z-index:10002;
+          opacity:0;
+          pointer-events:none;
+          transform:translate(-50%, -8px) scale(.96);
+          transition:opacity .14s ease, transform .14s ease;
+        }
+        #${QUOTE_POPUP_ID}[data-visible="true"]{
+          opacity:1;
+          pointer-events:auto;
+          transform:translate(-50%, -14px) scale(1);
+        }
+        #${QUOTE_BUTTON_ID}{
+          display:inline-flex;
+          align-items:center;
+          gap:10px;
+          border:none;
+          border-radius:999px;
+          padding:12px 18px 12px 16px;
+          background:rgba(255,255,255,.96);
+          color:#202123;
+          cursor:pointer;
+          box-shadow:0 10px 30px rgba(15,23,42,.18), 0 2px 10px rgba(15,23,42,.12), inset 0 0 0 1px rgba(148,163,184,.2);
+          backdrop-filter:blur(10px);
+          -webkit-backdrop-filter:blur(10px);
+          font:600 15px/1.1 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          white-space:nowrap;
+        }
+        #${QUOTE_BUTTON_ID}:hover{background:#fff}
+        #${QUOTE_BUTTON_ID}:active{transform:scale(.98)}
+        #${QUOTE_BUTTON_ID} svg{
+          width:18px;
+          height:18px;
+          fill:currentColor;
+          flex:0 0 auto;
+        }
+        @media (prefers-color-scheme: dark){
+          #${QUOTE_BUTTON_ID}{
+            background:rgba(45,45,52,.96);
+            color:#f3f4f6;
+            box-shadow:0 12px 28px rgba(2,6,23,.48), 0 2px 10px rgba(2,6,23,.3), inset 0 0 0 1px rgba(255,255,255,.08);
+          }
+          #${QUOTE_BUTTON_ID}:hover{background:rgba(58,58,66,.98)}
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    function createQuoteIcon() {
+      const svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('focusable', 'false');
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', 'M10.53 6.47C7.27 7.66 5 10.44 5 13.28 5 15.68 6.56 17 8.35 17c1.81 0 3.07-1.28 3.07-2.95 0-1.66-1.12-2.8-2.63-2.8-.28 0-.57.04-.87.13.34-1.31 1.67-2.93 3.26-3.75l-.65-1.16zm8 0C15.27 7.66 13 10.44 13 13.28 13 15.68 14.56 17 16.35 17c1.81 0 3.07-1.28 3.07-2.95 0-1.66-1.12-2.8-2.63-2.8-.28 0-.57.04-.87.13.34-1.31 1.67-2.93 3.26-3.75l-.65-1.16z');
+      svg.appendChild(path);
+      return svg;
+    }
+
+    function createQuotePopup() {
+      if (quotePopup?.isConnected) return quotePopup;
+      quotePopup = document.createElement('div');
+      quotePopup.id = QUOTE_POPUP_ID;
+      quotePopup.setAttribute('data-visible', 'false');
+
+      const button = document.createElement('button');
+      button.id = QUOTE_BUTTON_ID;
+      button.type = 'button';
+      button.setAttribute('aria-label', 'Quote and insert into AI Studio');
+      button.appendChild(createQuoteIcon());
+      const label = document.createElement('span');
+      label.textContent = 'Ask AI Studio';
+      button.appendChild(label);
+      button.addEventListener('mousedown', (event) => event.preventDefault());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const selectedText = getCurrentModelSelectionText();
+        hideQuotePopup();
+        if (!selectedText) return;
+        insertQuoteIntoEditor(selectedText);
+      });
+
+      quotePopup.appendChild(button);
+      document.body.appendChild(quotePopup);
+      return quotePopup;
+    }
+
+    function hideQuotePopup() {
+      if (quotePopup) quotePopup.setAttribute('data-visible', 'false');
+    }
+
+    function getEditorElement() {
+      return findDeep('textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][aria-label], ms-user-input textarea');
+    }
+
+    function insertTextIntoTextarea(textarea, text) {
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? textarea.value.length;
+      textarea.focus();
+      textarea.setRangeText(text, start, end, 'end');
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    }
+
+    function insertTextIntoContenteditable(editor, text) {
+      editor.focus();
+      const selection = window.getSelection();
+      if (selection) selection.removeAllRanges();
+      if (document.execCommand('insertText', false, text)) {
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        return;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      if (selection) selection.addRange(range);
+      const textNode = document.createTextNode(text);
+      range.insertNode(textNode);
+      range.setStartAfter(textNode);
+      range.collapse(true);
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    }
+
+    function insertQuoteIntoEditor(text) {
+      const editor = getEditorElement();
+      if (!editor) return;
+      const payload = `> ${cleanText(text).replace(/\n/g, '\n> ')}\n\n`;
+      if (!payload.trim()) return;
+      if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+        insertTextIntoTextarea(editor, payload);
+        return;
+      }
+      insertTextIntoContenteditable(editor, payload);
+    }
+
+    function isSelectionInsideModelResponse(range) {
+      if (!range) return false;
+      const nodes = [range.startContainer, range.endContainer, range.commonAncestorContainer];
+
+      if (nodes.some(node => closestAcrossShadow(node, 'textarea, input, ms-user-input, [contenteditable="true"][role="textbox"], [contenteditable="true"][aria-label]'))) {
+        return false;
+      }
+      if (nodes.some(node => closestAcrossShadow(node, 'pre, code, button, a, .actions, .actions *'))) {
+        return false;
+      }
+
+      return nodes.some(node => closestAcrossShadow(node, '.chat-turn-container.render:not(.user), .chat-turn-container:not(.user), ms-chat-turn'));
+    }
+
+    function getCurrentModelSelectionText() {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return '';
+      const range = selection.getRangeAt(0);
+      if (!isSelectionInsideModelResponse(range)) return '';
+      return cleanText(selection.toString());
+    }
+
+    function updateQuotePopupPosition() {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        hideQuotePopup();
+        return;
+      }
+
+      const text = getCurrentModelSelectionText();
+      if (!text || text.length < 2) {
+        hideQuotePopup();
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0);
+      if (rects.length === 0) {
+        hideQuotePopup();
+        return;
+      }
+
+      const popup = createQuotePopup();
+      const anchorElement = getElementFromNode(range.commonAncestorContainer);
+      const isRtl = getComputedStyle(anchorElement || document.body).direction === 'rtl';
+      const topRow = Math.min(...rects.map(rect => rect.top));
+      const topRects = rects.filter(rect => Math.abs(rect.top - topRow) < 6);
+      const anchorRect = topRects.sort((a, b) => {
+        if (isRtl) return b.right - a.right;
+        return a.left - b.left;
+      })[0];
+
+      const popupWidth = popup.offsetWidth || 320;
+      const popupHeight = popup.offsetHeight || 56;
+      const horizontalPadding = Math.max(16, popupWidth / 2 + 8);
+      const gap = 16;
+      const anchorX = isRtl
+        ? anchorRect.right - Math.min(anchorRect.width * 0.35, 32)
+        : anchorRect.left + Math.min(anchorRect.width * 0.35, 32);
+      const x = Math.max(horizontalPadding, Math.min(window.innerWidth - horizontalPadding, anchorX));
+      const preferredY = anchorRect.top - popupHeight - gap;
+      const fallbackBottom = Math.max(...rects.map(rect => rect.bottom));
+      const y = preferredY > 12 ? preferredY : fallbackBottom + gap;
+
+      popup.style.left = `${Math.round(x)}px`;
+      popup.style.top = `${Math.round(y)}px`;
+      popup.setAttribute('data-visible', 'true');
+    }
+
+    injectQuoteStyles();
+    createQuotePopup();
+
+    document.addEventListener('mouseup', () => {
+      setTimeout(updateQuotePopupPosition, 10);
+    });
+    document.addEventListener('keyup', () => {
+      setTimeout(updateQuotePopupPosition, 10);
+    });
+    document.addEventListener('selectionchange', () => {
+      const active = document.activeElement;
+      if (active && (active.matches?.('textarea, input, [contenteditable="true"]') || active.closest?.('ms-user-input'))) {
+        hideQuotePopup();
+        return;
+      }
+      setTimeout(updateQuotePopupPosition, 10);
+    });
+    document.addEventListener('mousedown', (event) => {
+      if (quotePopup?.contains(event.target)) return;
+      hideQuotePopup();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') hideQuotePopup();
+    });
+    window.addEventListener('scroll', hideQuotePopup, true);
+  })();
 
 })();
