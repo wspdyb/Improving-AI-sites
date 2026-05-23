@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         כלי עזר משולבים וסרגל צד ל-ChatGPT.com
 // @namespace    http://tampermonkey.net/
-// @version      3.3.00
+// @version      3.3.01
 // @description  משלב עיצוב בועות, RTL, העתקה, שמירה לקובץ, הסתרת "תוכניות", וסרגל צד Timeline דינמי מרובה עמודות, עם התאמה אישית, אופטימיזציות, ותמיכה במצב כהה. תיקונים לטבלאות ורשימות. (אופטימיזציות CPU/RAM + תיקון הסתרת תוכניות למשתמש חינמי)
 // @author       Y-PLONI
 // @match        *://chatgpt.com/*
@@ -72,7 +72,7 @@
     }
 
     const userMessageContainerSelector = 'div[data-message-author-role="user"][data-message-id]';
-    const userMessageBubbleSelector = 'div[data-message-author-role="user"] div[class*="rounded-3xl"]';
+    const userMessageBubbleSelector = 'div[data-message-author-role="user"] .user-message-bubble-color, div[data-message-author-role="user"] div[class*="rounded-3xl"], div[data-message-author-role="user"] div[class*="rounded-["]';
     const userTextContentSelector = 'div[data-message-author-role="user"] .whitespace-pre-wrap';
     const userMessageFlexContainerSelector = 'div[data-message-author-role="user"].text-message';
     const aiMessageContainerSelector = 'div[data-message-author-role="assistant"][data-message-id]';
