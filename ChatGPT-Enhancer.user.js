@@ -1173,9 +1173,13 @@ function playNotificationSound(notificationBody = 'התקבלה תשובה חד�
     }
 
     const TIMELINE_MESSAGE_ARTICLE_SELECTORS = [
+        '[data-testid^="conversation-turn-"]',
+        '[data-testid*="conversation-turn"]',
+        'section[data-scroll-anchor]',
         'article[data-testid^="conversation-turn-"]',
         'article[data-testid*="conversation-turn"]',
-        'article:has([data-message-author-role])'
+        'article:has([data-message-author-role])',
+        'section:has([data-message-author-role])'
     ];
 
     function timeline_findScrollableAncestor(startEl) {
