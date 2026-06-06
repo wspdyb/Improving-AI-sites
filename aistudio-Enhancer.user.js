@@ -21,7 +21,7 @@
   /*──────────────────────────────────
     0. ניהול הגדרות ותפריט
   ──────────────────────────────────*/
-  const DEFAULTS = { openHistoryOnLoad: true, sidebar: true, rtl: true, bubbles: true, codeExecution: true, grounding: true, autoSave: true, aiMessageNotifications: true, copyConversationButton: true };
+  const DEFAULTS = { openHistoryOnLoad: true, sidebar: true, rtl: true, bubbles: true, codeExecution: true, grounding: true, autoSave: true, aiMessageNotifications: true, copyConversationButton: true, githubSyncButton: true };
   const SETTINGS_KEY = 'aisEnhancerSettings';
   const settings = Object.assign({}, DEFAULTS, GM_getValue(SETTINGS_KEY, {}));
 
@@ -68,7 +68,7 @@
         const span = document.createElement('span'); span.textContent = label;
         row.append(cb, span); panel.appendChild(row);
     };
-    addCheckbox('openHistoryOnLoad', 'פתח היסטוריה בהפעלה ראשונה'); addCheckbox('sidebar', 'הצג סרגל צד משופר'); addCheckbox('rtl', 'תקן RTL'); addCheckbox('bubbles', 'בועות צבע'); addCheckbox('autoSave', 'שמירה אוטומטית כל 5 שניות'); addCheckbox('aiMessageNotifications', 'התראות קוליות וחזותיות על הודעות AI חדשות'); addCheckbox('copyConversationButton', 'הצג כפתורי "העתק שיחה" ו"שמור לקובץ"');
+    addCheckbox('openHistoryOnLoad', 'פתח היסטוריה בהפעלה ראשונה'); addCheckbox('sidebar', 'הצג סרגל צד משופר'); addCheckbox('rtl', 'תקן RTL'); addCheckbox('bubbles', 'בועות צבע'); addCheckbox('autoSave', 'שמירה אוטומטית כל 5 שניות'); addCheckbox('aiMessageNotifications', 'התראות קוליות וחזותיות על הודעות AI חדשות'); addCheckbox('copyConversationButton', 'הצג כפתורי "העתק שיחה" ו"שמור לקובץ"'); addCheckbox('githubSyncButton', 'הצג כפתור סנכרון אוטומטי ל-GitHub');
 
     const notifTitle = document.createElement('h4'); notifTitle.textContent = 'התראות'; notifTitle.style.margin = '12px 0 4px'; panel.appendChild(notifTitle);
     const notifBtn = document.createElement('button');
@@ -273,6 +273,7 @@
       const MENU_TOGGLE_BUTTON_ID = 'ais-toggle-conversation-menu';
       const ACTIONS_MENU_ID = 'ais-conversation-actions-menu';
       const SAVE_BUTTON_ID = 'ais-save-conversation-button';
+      const GITHUB_SYNC_BUTTON_ID = 'ais-github-sync-button';
       const ACTIONS_TOOLBAR_ATTR = 'data-ais-toolbar-mounted';
 
       function injectCopyButtonStyles() {
@@ -292,8 +293,7 @@
             right: 16px;
             z-index: 10001;
           }
-          #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID} {
-            height: 36px;
+          #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID}, #${GITHUB_SYNC_BUTTON_ID} {
             height: 36px;
             border: 1px solid rgba(0,0,0,0.15);
             background: #ffffff;
@@ -304,7 +304,8 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
           }
           #${ACTIONS_CONTAINER_ID}[data-placement="toolbar"] #${COPY_BUTTON_ID},
-          #${ACTIONS_CONTAINER_ID}[data-placement="toolbar"] #${MENU_TOGGLE_BUTTON_ID} {
+          #${ACTIONS_CONTAINER_ID}[data-placement="toolbar"] #${MENU_TOGGLE_BUTTON_ID},
+          #${ACTIONS_CONTAINER_ID}[data-placement="toolbar"] #${GITHUB_SYNC_BUTTON_ID} {
             box-shadow: none;
           }
           #${COPY_BUTTON_ID} {
@@ -313,13 +314,19 @@
             border-radius: 10px 0 0 10px;
             border-right-width: 0;
           }
+          #${GITHUB_SYNC_BUTTON_ID} {
+            min-width: 44px;
+            padding: 0 10px;
+            border-radius: 0;
+            border-right-width: 0;
+          }
           #${MENU_TOGGLE_BUTTON_ID} {
             min-width: 26px;
             padding: 0 6px;
             font-size: 14px;
             border-radius: 0 10px 10px 0;
           }
-          #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] { background: #f4f4f4; }
+          #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${GITHUB_SYNC_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] { background: #f4f4f4; }
           #${ACTIONS_MENU_ID} {
             position: absolute;
             top: calc(100% + 8px);
@@ -352,12 +359,12 @@
           }
           #${ACTIONS_MENU_ID} button:hover { background: #f4f4f4; }
           @media (prefers-color-scheme: dark) {
-            #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID} {
+            #${COPY_BUTTON_ID}, #${MENU_TOGGLE_BUTTON_ID}, #${GITHUB_SYNC_BUTTON_ID} {
               background: #2b2b2b;
               color: #f3f3f3;
               border-color: rgba(255,255,255,0.2);
             }
-            #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] { background: #3a3a3a; }
+            #${COPY_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}:hover, #${GITHUB_SYNC_BUTTON_ID}:hover, #${MENU_TOGGLE_BUTTON_ID}[aria-expanded="true"] { background: #3a3a3a; }
             #${ACTIONS_MENU_ID} {
               background: #2b2b2b;
               border-color: rgba(255,255,255,0.2);
@@ -387,6 +394,14 @@
           const candidates = Array.from(document.querySelectorAll(selector));
           const match = candidates.find((element) => {
             if (!(element instanceof HTMLElement)) return false;
+            
+            // חסימה 1: האם האלמנט מוסתר לחלוטין (display: none)?
+            if (element.offsetParent === null) return false;
+            
+            // חסימה 2: האם Angular העלים אותו ויזואלית?
+            const style = window.getComputedStyle(element);
+            if (style.opacity === '0' || style.visibility === 'hidden') return false;
+
             const rect = element.getBoundingClientRect();
             return rect.width > 80 && rect.height > 24;
           });
@@ -399,7 +414,10 @@
         });
 
         if (actionButton && actionButton.parentElement instanceof HTMLElement) {
-          return actionButton.parentElement;
+          const style = window.getComputedStyle(actionButton.parentElement);
+          if (style.opacity !== '0' && style.visibility !== 'hidden' && actionButton.parentElement.offsetParent !== null) {
+              return actionButton.parentElement;
+          }
         }
 
         return null;
@@ -412,14 +430,20 @@
             anchor.prepend(container);
           }
           container.setAttribute('data-placement', 'toolbar');
+          container.style.display = 'inline-flex'; // הבטחת תצוגה
           anchor.setAttribute(ACTIONS_TOOLBAR_ATTR, 'true');
           return;
         }
 
+        // אם לא נמצא עוגן (למשל, אנחנו במסך הראשי בלי שיחה פתוחה)
         if (container.parentElement !== document.body) {
           document.body.appendChild(container);
         }
         container.setAttribute('data-placement', 'floating');
+        
+        // נציג את הסרגל הצף רק אם באמת יש שיחה פעילה ברקע
+        const hasChat = document.querySelector('ms-chat-session, ms-chat-turn');
+        container.style.display = hasChat ? 'inline-flex' : 'none';
       }
 
       const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -660,6 +684,70 @@
         }
       }
 
+      async function triggerNativeGithubSync() {
+        if (isConversationActionInProgress) return;
+        isConversationActionInProgress = true;
+        try {
+          flashActionButton(GITHUB_SYNC_BUTTON_ID, '⏳'); // חיווי טעינה
+          
+          const settingsBtn = document.querySelector('button[aria-label="Settings"]');
+          if (!settingsBtn) throw new Error("לא נמצא כפתור ההגדרות");
+          settingsBtn.click();
+          
+          // ---- 1. המתנה לפתיחת החלונית ----
+          let githubTab = null;
+          for (let i = 0; i < 25; i++) { 
+            await sleep(200);
+            const tabs = Array.from(document.querySelectorAll('.cdk-overlay-container button.ms-button-filter-chip'));
+            githubTab = tabs.find(btn => btn.textContent.trim() === 'GitHub' || btn.getAttribute('data-view') === '3');
+            if (githubTab) break; 
+          }
+          
+          if (!githubTab) throw new Error("חלונית ההגדרות או טאב ה-GitHub לא נטענו בזמן.");
+          githubTab.click();
+
+          // ---- 2. המתנה חכמה ליצירת הקומיט (כולל זיהוי מצב טעינה) ----
+          let commitBtn = null;
+          for (let i = 0; i < 60; i++) { // בודק עד 30 שניות (60 פעמים של חצי שניה)
+            await sleep(500);
+            
+            const overlayContainer = document.querySelector('.cdk-overlay-container');
+            if (!overlayContainer) continue;
+
+            // הזיהוי החדש: האם גוגל עדיין מחשב את השינויים?
+            if (overlayContainer.textContent.includes('Loading file differences')) {
+              continue; // כן - מדלגים וממשיכים להמתין בסבלנות
+            }
+
+            // אם חלון הטעינה נעלם, מחפשים את הכפתור
+            commitBtn = overlayContainer.querySelector('button[aria-label="Push latest changes to GitHub"]');
+            
+            // מוודאים שהוא קיים ולא חסום
+            if (commitBtn && commitBtn.getAttribute('aria-disabled') === 'false') {
+              break; 
+            }
+          }
+
+          if (commitBtn && commitBtn.getAttribute('aria-disabled') === 'false') {
+            commitBtn.click();
+            flashActionButton(GITHUB_SYNC_BUTTON_ID, '✔️'); // חיווי הצלחה
+            
+            // מחכים שהבקשה תצא לגוגל לפני שסוגרים את הדיאלוג
+            await sleep(1500);
+            const backdrop = document.querySelector('.cdk-overlay-backdrop');
+            if (backdrop) backdrop.click();
+            
+          } else {
+            throw new Error("זמן ההמתנה ליצירת הקומיט פג, הכפתור לא הופיע, או שאין שינויים בקוד.");
+          }
+        } catch (err) {
+          console.error('[AI Studio] סנכרון נכשל:', err.message);
+          flashActionButton(GITHUB_SYNC_BUTTON_ID, '❌'); // חיווי שגיאה
+        } finally {
+          isConversationActionInProgress = false;
+        }
+      }
+
       async function copyConversation() {
         await runConversationAction(COPY_BUTTON_ID, async ({ transcript }) => {
           if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -722,12 +810,29 @@
 
       function ensureCopyButton() {
         let container = document.getElementById(ACTIONS_CONTAINER_ID);
+        
+        // התיקון: בודקים *רק* אם הקונטיינר הוסר פיזית מה-DOM, 
+        // בלי לבדוק offsetWidth כדי למנוע לולאה אינסופית שקורסת את הדפדפן.
+        if (container && !document.body.contains(container)) {
+            container = null;
+        }
+
         if (!container) {
           container = document.createElement('div');
           container.id = ACTIONS_CONTAINER_ID;
         }
+        
         syncContainerPlacement(container);
+        
         ensureActionButton(container, COPY_BUTTON_ID, '📋', 'העתק את כל השיחה', 'Copy full conversation', copyConversation);
+        
+        if (settings.githubSyncButton) {
+            ensureActionButton(container, GITHUB_SYNC_BUTTON_ID, '🐙', 'סנכרון אוטומטי לגיטהב', 'Auto Sync to GitHub', triggerNativeGithubSync);
+        } else {
+            const ghBtn = document.getElementById(GITHUB_SYNC_BUTTON_ID);
+            if (ghBtn) ghBtn.remove();
+        }
+
         ensureActionButton(container, MENU_TOGGLE_BUTTON_ID, '▾', 'אפשרויות נוספות', 'Conversation export options', (event) => {
           event.preventDefault();
           event.stopPropagation();
