@@ -172,33 +172,41 @@
     })();
   }
 
-  /*──────────────────────────────────
+ /*──────────────────────────────────
     2. RTL Fixes
   ──────────────────────────────────*/
- if (settings.rtl) {
+  if (settings.rtl) {
     (() => {
       'use strict';
       const fixStyle = `
-        /* הגדרה כללית לטקסט בתוך הבועות (Bubbles) - RTL ותיקון סימני פיסוק */
-        .bubble,
-        .bubble p,
-        .bubble div:not([class*="code"]):not(ms-code-block),
+        /* הגדרת RTL ותיקון נקודות וסימני פיסוק - רק לבלוקים הראשיים */
+        .bubble p, 
+        .bubble div:not([class*="code"]):not(ms-code-block), 
         .bubble li,
-        .bubble span:not(.inline-code):not([class*="code"]),
-        ms-cmark-node {
+        .bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6,
+        .prose .text-token-streaming {
             direction: rtl !important;
             text-align: right !important;
             unicode-bidi: plaintext !important;
         }
 
+        /* התיקון הקריטי: שחרור האלמנטים הפנימיים כדי שלא ישברו את רצף המשפט (טקסט מודגש/נטוי) */
+        .bubble span:not(.inline-code):not([class*="code"]),
+        .bubble strong,
+        .bubble em,
+        .bubble b,
+        .bubble i,
+        ms-cmark-node {
+            unicode-bidi: normal !important;
+        }
+
         /* תיקון ספציפי לרשימות (נקודות ומספרים) */
-        .bubble ul,
+        .bubble ul, 
         .bubble ol {
             direction: rtl !important;
             text-align: right !important;
             padding-right: 1.5em !important;
             padding-left: 0 !important;
-            unicode-bidi: plaintext !important;
         }
 
         /* כפתורי חיפוש/מקורות */
@@ -214,9 +222,9 @@
         }
 
         /* שמירה על LTR (משמאל לימין) עבור בלוקים של קוד וטקסט בתוך שורת קוד */
-        .bubble pre,
-        .bubble pre *,
-        .bubble code,
+        .bubble pre, 
+        .bubble pre *, 
+        .bubble code, 
         .bubble code *,
         ms-code-block,
         ms-code-block *,
@@ -226,10 +234,9 @@
             unicode-bidi: isolate !important;
         }
       `;
-      (typeof GM_addStyle === 'function') ? GM_addStyle(fixStyle) : (() => { const s = document.createElement('style'); s.textContent = fixStyle; document.head.appendChild(s); })();
+      (typeof GM_addStyle==='function')?GM_addStyle(fixStyle):(()=>{const s=document.createElement('style');s.textContent=fixStyle;document.head.appendChild(s);})();
     })();
   }
-
   /*──────────────────────────────────
     3. בועות צבע
   ──────────────────────────────────*/
