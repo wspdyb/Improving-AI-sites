@@ -175,11 +175,58 @@
   /*──────────────────────────────────
     2. RTL Fixes
   ──────────────────────────────────*/
-  if (settings.rtl) {
+ if (settings.rtl) {
     (() => {
       'use strict';
-      const fixStyle = `.chat-turn-container.render, .chat-turn-container.render *{direction:rtl !important;text-align:right !important;}.chat-turn-container.render p, .chat-turn-container.render span, .chat-turn-container.render div{unicode-bidi:isolate !important;}.prose .text-token-streaming{direction:rtl !important;text-align:right !important;}button[class*="grounding"]{direction:rtl !important;text-align:right !important;unicode-bidi:plaintext !important;}button[class*="grounding"] svg{float:left !important;margin-left:0 !important;margin-right:8px !important;}.chat-turn-container.render pre, .chat-turn-container.render pre *, .chat-turn-container.render code, .chat-turn-container.render div[class*="code"], .chat-turn-container.render div[class*="code"] *{direction:ltr !important;text-align:left !important;unicode-bidi:plaintext !important;};`;
-      (typeof GM_addStyle==='function')?GM_addStyle(fixStyle):(()=>{const s=document.createElement('style');s.textContent=fixStyle;document.head.appendChild(s);})();
+      const fixStyle = `
+        /* הגדרה כללית לטקסט בתוך הבועות (Bubbles) - RTL ותיקון סימני פיסוק */
+        .bubble,
+        .bubble p,
+        .bubble div:not([class*="code"]):not(ms-code-block),
+        .bubble li,
+        .bubble span:not(.inline-code):not([class*="code"]),
+        ms-cmark-node {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* תיקון ספציפי לרשימות (נקודות ומספרים) */
+        .bubble ul,
+        .bubble ol {
+            direction: rtl !important;
+            text-align: right !important;
+            padding-right: 1.5em !important;
+            padding-left: 0 !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* כפתורי חיפוש/מקורות */
+        button[class*="grounding"] {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+        button[class*="grounding"] svg {
+            float: left !important;
+            margin-left: 0 !important;
+            margin-right: 8px !important;
+        }
+
+        /* שמירה על LTR (משמאל לימין) עבור בלוקים של קוד וטקסט בתוך שורת קוד */
+        .bubble pre,
+        .bubble pre *,
+        .bubble code,
+        .bubble code *,
+        ms-code-block,
+        ms-code-block *,
+        .inline-code {
+            direction: ltr !important;
+            text-align: left !important;
+            unicode-bidi: isolate !important;
+        }
+      `;
+      (typeof GM_addStyle === 'function') ? GM_addStyle(fixStyle) : (() => { const s = document.createElement('style'); s.textContent = fixStyle; document.head.appendChild(s); })();
     })();
   }
 
