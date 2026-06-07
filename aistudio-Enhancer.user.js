@@ -233,6 +233,20 @@
             text-align: left !important;
             unicode-bidi: isolate !important;
         }
+        /* ====== תיקון עבור תיבת ההקלדה (Input Textarea) ====== */
+        .input-container textarea,
+        textarea.cdk-textarea-autosize,
+        ms-user-input textarea {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+        
+        /* סידור ה-Placeholder (הטקסט הרך לפני שמתחילים להקליד) */
+        .input-container textarea::placeholder {
+            text-align: right !important;
+            direction: rtl !important;
+        }
       `;
       (typeof GM_addStyle==='function')?GM_addStyle(fixStyle):(()=>{const s=document.createElement('style');s.textContent=fixStyle;document.head.appendChild(s);})();
     })();
